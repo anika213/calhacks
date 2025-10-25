@@ -119,6 +119,7 @@ app.post('/api/auth/register', async (req, res) => {
       name: name.trim(),
       age: parseInt(age),
       preferredLanguage: preferredLanguage || 'English',
+      accuracies: [], // Initialize empty accuracies array
       createdAt: new Date(),
       updatedAt: new Date()
     };
@@ -432,6 +433,30 @@ app.post('/api/games/score', authenticateToken, async (req, res) => {
 
   } catch (error) {
     console.error('Error storing game score:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+});
+
+// Migration endpoint to add accuracies field to existing users
+app.post('/api/users/migrate-accuracies', async (req, res) => {
+  try {
+    // Add accuracies field to all users who don't have it
+    const result = await usersCollection.updateMany(
+      { accuracies: { $exists: false } },
+      { $set: { accuracies: [] } }
+    );
+
+    res.status(200).json({
+      success: true,
+      message: `Updated ${result.modifiedCount} users with accuracies field`,
+      modifiedCount: result.modifiedCount
+    });
+
+  } catch (error) {
+    console.error('Error migrating accuracies field:', error);
     res.status(500).json({
       success: false,
       message: 'Internal server error'

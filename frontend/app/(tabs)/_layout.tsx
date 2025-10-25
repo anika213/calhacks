@@ -35,17 +35,7 @@ export default function TabLayout() {
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="house.fill" color={color} />,
         }}
       />
-      <Tabs.Screen
-        name="login"
-        options={{
-          title: user ? 'Profile' : 'Login',
-          tabBarIcon: ({ color }) => user ? (
-            <UserAvatar size={28} />
-          ) : (
-            <IconSymbol size={28} name="person.fill" color={color} />
-          ),
-        }}
-      />
+
       <Tabs.Screen
         name="tracker"
         options={{
@@ -58,6 +48,18 @@ export default function TabLayout() {
         options={{
           title: 'Game',
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="gamecontroller.fill" color={color} />,
+        }}
+      />
+
+<Tabs.Screen
+        name="login"
+        options={{
+          title: user ? 'Profile' : 'Login',
+          tabBarIcon: ({ color }) => user ? (
+            <UserAvatar size={28} />
+          ) : (
+            <IconSymbol size={28} name="person.fill" color={color} />
+          ),
         }}
       />
       <Tabs.Screen

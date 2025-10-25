@@ -50,7 +50,7 @@ export default function LoginScreen() {
     
     setLoadingProgress(true);
     try {
-      const response = await fetch('http://localhost:8000/api/progress/daily', {
+      const response = await fetch('http://10.0.30.58:8000/api/progress/daily', {
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
