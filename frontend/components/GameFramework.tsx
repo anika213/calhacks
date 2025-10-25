@@ -3,6 +3,8 @@ import { View, Text, StyleSheet, TouchableOpacity, Alert } from 'react-native';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { useAuth } from '@/contexts/AuthContext';
 
+const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL || 'http://10.0.30.58:8000/api';
+
 interface GameFrameworkProps {
   title: string;
   description: string;
@@ -35,7 +37,7 @@ export default function GameFramework({
     }
 
     try {
-      const response = await fetch('http://10.0.30.58:8000/api/games/score', {
+      const response = await fetch(`${API_BASE_URL}/games/score`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

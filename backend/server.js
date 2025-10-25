@@ -15,7 +15,6 @@ const router = express.Router()
 
 
 const uri = process.env.MONGO_URI
-console.log(uri)
 const client = new MongoClient(uri);
 const database = client.db(process.env.DATABASE_NAME);
 const usersCollection = database.collection("users");

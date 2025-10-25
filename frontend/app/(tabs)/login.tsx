@@ -26,6 +26,8 @@ interface DailyProgress {
   mentalHealthChecks: number;
 }
 
+const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL || 'http://10.0.30.58:8000/api';
+
 export default function LoginScreen() {
   const router = useRouter();
   const { login, register, isLoading, user, logout, token } = useAuth();
@@ -47,10 +49,10 @@ export default function LoginScreen() {
 
   const fetchDailyProgress = async () => {
     if (!token) return;
-    
+
     setLoadingProgress(true);
     try {
-      const response = await fetch('http://10.0.30.58:8000/api/progress/daily', {
+      const response = await fetch(`${API_BASE_URL}/progress/daily`, {
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
@@ -206,9 +208,9 @@ export default function LoginScreen() {
     try {
       // Step 1: Check if email already exists
       const checkResponse = await fetch(
-        `http://10.0.30.58:8000/api/auth/check-email?email=${encodeURIComponent(email)}`
+        `${API_BASE_URL}/auth/check-email?email=${encodeURIComponent(email)}`
       );
-            const checkData = await checkResponse.json();
+      const checkData = await checkResponse.json();
   
       if (checkData.exists) {
         Alert.alert('Error', 'This email is already in use. Please try logging in or use another email.');
@@ -216,7 +218,7 @@ export default function LoginScreen() {
       }
   
       // Step 2: If not exists, proceed to register
-      const registerResponse = await fetch(`http://10.0.30.58:8000/api/auth/register`, {
+      const registerResponse = await fetch(`${API_BASE_URL}/auth/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

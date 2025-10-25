@@ -20,6 +20,8 @@ interface AccuracyData {
   date: string;
 }
 
+const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL || 'http://10.0.30.58:8000/api';
+
 export default function TrackerScreen() {
   const { user, token } = useAuth();
   const [accuracyData, setAccuracyData] = useState<AccuracyData[]>([]);
@@ -37,10 +39,10 @@ export default function TrackerScreen() {
 
   const fetchUserAccuracies = async () => {
     if (!token) return;
-    
+
     setLoading(true);
     try {
-      const response = await fetch('http://10.0.30.58:8000/api/auth/me', {
+      const response = await fetch(`${API_BASE_URL}/auth/me`, {
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',

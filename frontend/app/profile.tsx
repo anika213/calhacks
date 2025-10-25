@@ -15,6 +15,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { useRouter } from 'expo-router';
 
+const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL || 'http://10.0.30.58:8000/api';
+
 export default function ProfileScreen() {
   const router = useRouter();
   const [formData, setFormData] = useState({
@@ -62,7 +64,7 @@ export default function ProfileScreen() {
     
     try {
       // TODO: Replace with actual API call
-      const response = await fetch('http://10.0.30.58:8000/api/users/profile', {
+      const response = await fetch(`${API_BASE_URL}/users/profile`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
