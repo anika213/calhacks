@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 
 import { 
   View, 
@@ -18,15 +18,57 @@ import { useRouter } from 'expo-router';
 
 import { useAuth } from '@/contexts/AuthContext';
 
+interface DailyProgress {
+  date: string;
+  completedTasks: Array<{ id: string; name: string; type: string }>;
+  pendingTasks: Array<{ id: string; name: string; type: string }>;
+  gameScores: Array<{ gameName: string; accuracy: number; gameType: string }>;
+  mentalHealthChecks: number;
+}
+
 export default function LoginScreen() {
   const router = useRouter();
-  const { login, register, isLoading, user, logout } = useAuth();
+  const { login, register, isLoading, user, logout, token } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isSignUp, setIsSignUp] = useState(false);
   const [name, setName] = useState('');
   const [age, setAge] = useState('');
   const [preferredLanguage, setPreferredLanguage] = useState('English');
+  const [dailyProgress, setDailyProgress] = useState<DailyProgress | null>(null);
+  const [loadingProgress, setLoadingProgress] = useState(false);
+
+  // Fetch daily progress when user is logged in
+  useEffect(() => {
+    if (user && token) {
+      fetchDailyProgress();
+    }
+  }, [user, token]);
+
+  const fetchDailyProgress = async () => {
+    if (!token) return;
+    
+    setLoadingProgress(true);
+    try {
+      const response = await fetch('http://localhost:8000/api/progress/daily', {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setDailyProgress(data.data);
+      } else {
+        console.error('Failed to fetch daily progress');
+      }
+    } catch (error) {
+      console.error('Error fetching daily progress:', error);
+    } finally {
+      setLoadingProgress(false);
+    }
+  };
 
   // If user is logged in, show profile view
 
@@ -62,6 +104,70 @@ export default function LoginScreen() {
               <Text style={styles.infoLabel}>Language</Text>
               <Text style={styles.infoValue}>{user.preferredLanguage}</Text>
             </View>
+          </View>
+
+          {/* Today's Progress Section */}
+          <View style={styles.progressSection}>
+            <Text style={styles.progressTitle}>Today's Progress</Text>
+            
+            {loadingProgress ? (
+              <View style={styles.loadingContainer}>
+                <Text style={styles.loadingText}>Loading your progress...</Text>
+              </View>
+            ) : dailyProgress ? (
+              <View>
+                {/* Completed Tasks */}
+                {dailyProgress.completedTasks.length > 0 && (
+                  <View style={styles.taskSection}>
+                    <Text style={styles.taskSectionTitle}>✅ Completed Tasks</Text>
+                    {dailyProgress.completedTasks.map((task, index) => (
+                      <View key={index} style={styles.taskItem}>
+                        <IconSymbol name="checkmark.circle.fill" size={20} color="#34C759" />
+                        <Text style={styles.completedTaskText}>{task.name}</Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+
+                {/* Pending Tasks */}
+                {dailyProgress.pendingTasks.length > 0 && (
+                  <View style={styles.taskSection}>
+                    <Text style={styles.taskSectionTitle}>⏳ Pending Tasks</Text>
+                    {dailyProgress.pendingTasks.map((task, index) => (
+                      <View key={index} style={styles.taskItem}>
+                        <IconSymbol name="circle" size={20} color="#8E8E93" />
+                        <Text style={styles.pendingTaskText}>{task.name}</Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+
+                {/* Game Scores Summary */}
+                {dailyProgress.gameScores.length > 0 && (
+                  <View style={styles.scoreSection}>
+                    <Text style={styles.scoreSectionTitle}>🎮 Today's Scores</Text>
+                    {dailyProgress.gameScores.map((score, index) => (
+                      <View key={index} style={styles.scoreItem}>
+                        <Text style={styles.scoreGameName}>{score.gameName}</Text>
+                        <Text style={styles.scoreValue}>{score.accuracy}%</Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+
+                {/* No activity message */}
+                {dailyProgress.completedTasks.length === 0 && dailyProgress.pendingTasks.length > 0 && (
+                  <View style={styles.noActivityContainer}>
+                    <IconSymbol name="calendar.badge.clock" size={40} color="#8E8E93" />
+                    <Text style={styles.noActivityText}>Start your day with some activities!</Text>
+                  </View>
+                )}
+              </View>
+            ) : (
+              <View style={styles.errorContainer}>
+                <Text style={styles.errorText}>Unable to load progress</Text>
+              </View>
+            )}
           </View>
 
           <TouchableOpacity 
@@ -482,5 +588,126 @@ const styles = StyleSheet.create({
     fontFamily: 'System',
     fontWeight: '600',
     letterSpacing: 0.5,
+  },
+  // Progress section styles
+  progressSection: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 24,
+    marginBottom: 30,
+    shadowColor: '#B8C5B8',
+    shadowOffset: {
+      width: 0,
+      height: 4,
+    },
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    elevation: 3,
+    borderWidth: 1,
+    borderColor: '#E8EDE8',
+  },
+  progressTitle: {
+    fontSize: 22,
+    fontFamily: 'System',
+    fontWeight: '600',
+    color: '#5A6B5A',
+    marginBottom: 20,
+    textAlign: 'center',
+    letterSpacing: 0.3,
+  },
+  loadingContainer: {
+    alignItems: 'center',
+    paddingVertical: 20,
+  },
+  loadingText: {
+    fontSize: 18,
+    fontFamily: 'System',
+    color: '#7A8B7A',
+    fontWeight: '400',
+  },
+  taskSection: {
+    marginBottom: 20,
+  },
+  taskSectionTitle: {
+    fontSize: 18,
+    fontFamily: 'System',
+    fontWeight: '600',
+    color: '#5A6B5A',
+    marginBottom: 12,
+    letterSpacing: 0.2,
+  },
+  taskItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+    paddingVertical: 4,
+  },
+  completedTaskText: {
+    fontSize: 16,
+    fontFamily: 'System',
+    color: '#34C759',
+    marginLeft: 12,
+    fontWeight: '500',
+  },
+  pendingTaskText: {
+    fontSize: 16,
+    fontFamily: 'System',
+    color: '#7A8B7A',
+    marginLeft: 12,
+    fontWeight: '400',
+  },
+  scoreSection: {
+    marginBottom: 20,
+  },
+  scoreSectionTitle: {
+    fontSize: 18,
+    fontFamily: 'System',
+    fontWeight: '600',
+    color: '#5A6B5A',
+    marginBottom: 12,
+    letterSpacing: 0.2,
+  },
+  scoreItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#F8F9F8',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 8,
+  },
+  scoreGameName: {
+    fontSize: 16,
+    fontFamily: 'System',
+    color: '#5A6B5A',
+    fontWeight: '500',
+  },
+  scoreValue: {
+    fontSize: 16,
+    fontFamily: 'System',
+    color: '#6B8E6B',
+    fontWeight: '600',
+  },
+  noActivityContainer: {
+    alignItems: 'center',
+    paddingVertical: 20,
+  },
+  noActivityText: {
+    fontSize: 18,
+    fontFamily: 'System',
+    color: '#7A8B7A',
+    marginTop: 12,
+    textAlign: 'center',
+    fontWeight: '400',
+  },
+  errorContainer: {
+    alignItems: 'center',
+    paddingVertical: 20,
+  },
+  errorText: {
+    fontSize: 16,
+    fontFamily: 'System',
+    color: '#FF6B6B',
+    fontWeight: '500',
   },
 });

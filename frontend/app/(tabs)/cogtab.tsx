@@ -17,6 +17,7 @@ export default function CognitiveGameTab() {
           description="Test your recall and focus through cognitive challenges."
           color="#6B8E6B"
           questions={cognitiveQuestions}
+          gameType="cognitive"
           onComplete={(score) => console.log('Cognitive game finished with', score)}
         />
       </ScrollView>

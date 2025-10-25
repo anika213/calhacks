@@ -385,6 +385,142 @@ app.get('/api/users', async (req, res) => {
   }
 });
 
+// Game Scores Routes
+app.post('/api/games/score', authenticateToken, async (req, res) => {
+  try {
+    const { gameName, accuracy, gameType } = req.body;
+    const userId = req.user.userId;
+    console.log('Storing game score:', gameName, accuracy, gameType, userId);
+
+    // Validate required fields
+    if (!gameName || accuracy === undefined || !gameType) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing required fields: gameName, accuracy, and gameType are required'
+      });
+    }
+
+    // Create game score object to append to user's accuracies array
+    const gameScore = {
+      gameName: gameName,
+      accuracy: accuracy,
+      gameType: gameType, // 'cognitive' or 'mental_health'
+      date: new Date()
+    };
+
+    // Append to user's accuracies array in users collection
+    const result = await usersCollection.updateOne(
+      { _id: new ObjectId(userId) },
+      { 
+        $push: { accuracies: gameScore },
+        $set: { updatedAt: new Date() }
+      }
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    res.status(201).json({
+      success: true,
+      message: 'Game score stored successfully',
+      gameScore: gameScore
+    });
+
+  } catch (error) {
+    console.error('Error storing game score:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+});
+
+// Get user's daily progress
+app.get('/api/progress/daily', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    // Get today's game scores from user's accuracies array
+    const user = await usersCollection.findOne({ _id: new ObjectId(userId) });
+    const todayScores = user?.accuracies?.filter(score => {
+      const scoreDate = new Date(score.date);
+      return scoreDate >= today && scoreDate < tomorrow;
+    }) || [];
+
+    // Get today's mental health check-ins
+    const mentalHealthCollection = database.collection("mental_health_analyses");
+    const todayMentalHealth = await mentalHealthCollection
+      .find({ 
+        userId: new ObjectId(userId),
+        timestamp: { $gte: today, $lt: tomorrow }
+      })
+      .toArray();
+
+    // Define available tasks
+    const availableTasks = [
+      { id: 'cognitive_game', name: 'Cognitive Function Game', type: 'cognitive' },
+      { id: 'mental_health_check', name: 'Mental Health Check-in', type: 'mental_health' },
+      { id: 'daily_checkin', name: 'Daily Check-in', type: 'general' }
+    ];
+
+    // Check which tasks are completed
+    const completedTasks = [];
+    const pendingTasks = [];
+
+    availableTasks.forEach(task => {
+      if (task.type === 'cognitive') {
+        const hasCognitiveGame = todayScores.some(score => score.gameType === 'cognitive');
+        if (hasCognitiveGame) {
+          completedTasks.push(task);
+        } else {
+          pendingTasks.push(task);
+        }
+      } else if (task.type === 'mental_health') {
+        const hasMentalHealthCheck = todayMentalHealth.length > 0;
+        if (hasMentalHealthCheck) {
+          completedTasks.push(task);
+        } else {
+          pendingTasks.push(task);
+        }
+      } else if (task.type === 'general') {
+        // Daily check-in is considered completed if any game was played
+        const hasAnyActivity = todayScores.length > 0 || todayMentalHealth.length > 0;
+        if (hasAnyActivity) {
+          completedTasks.push(task);
+        } else {
+          pendingTasks.push(task);
+        }
+      }
+    });
+
+    res.status(200).json({
+      success: true,
+      data: {
+        date: today.toISOString().split('T')[0],
+        completedTasks,
+        pendingTasks,
+        gameScores: todayScores,
+        mentalHealthChecks: todayMentalHealth.length
+      }
+    });
+
+  } catch (error) {
+    console.error('Error fetching daily progress:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+});
+
 app.listen(8000, () => {
     console.log(`Server is running on port 8000.`);
   });

@@ -91,7 +91,7 @@ export default function TrackerScreen() {
           </TouchableOpacity>
         </View>
 
-        <View style={styles.statsGrid}>
+        {/* <View style={styles.statsGrid}>
           <StatCard
             title="Sessions"
             value={currentData.sessions.toString()}
@@ -120,7 +120,7 @@ export default function TrackerScreen() {
             icon="flame.fill"
             color="#FF3B30"
           />
-        </View>
+        </View> */}
 
         <View style={styles.chartContainer}>
           <Text style={styles.chartTitle}>Progress Chart</Text>

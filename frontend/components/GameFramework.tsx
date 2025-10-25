@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Alert } from 'react-native';
 import { IconSymbol } from '@/components/ui/icon-symbol';
-
+import { useAuth } from '@/contexts/AuthContext';
 
 interface GameFrameworkProps {
   title: string;
@@ -10,6 +10,7 @@ interface GameFrameworkProps {
   questions?: any[];
   simulate?: boolean;
   onComplete?: (score: number) => void;
+  gameType?: 'cognitive' | 'mental_health';
 }
 
 export default function GameFramework({
@@ -18,10 +19,44 @@ export default function GameFramework({
   color = '#6B8E6B',
   questions = [],
   simulate = true,
-  onComplete
+  onComplete,
+  gameType = 'cognitive'
 }: GameFrameworkProps) {
+  const { user, token } = useAuth();
   const [score, setScore] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
+
+  const storeGameScore = async (finalScore: number) => {
+    alert('Storing game score:' + finalScore);
+    console.log('Storing game score:', finalScore);
+    if (!user || !token) {
+      console.log('User not authenticated, skipping score storage');
+      return;
+    }
+
+    try {
+      const response = await fetch('http://10.0.30.58:8000/api/games/score', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          gameName: title,
+          accuracy: finalScore,
+          gameType: gameType
+        }),
+      });
+
+      if (response.ok) {
+        console.log('Game score stored successfully');
+      } else {
+        console.error('Failed to store game score');
+      }
+    } catch (error) {
+      console.error('Error storing game score:', error);
+    }
+  };
 
   useEffect(() => {
     let interval: ReturnType<typeof setTimeout>;
@@ -32,6 +67,8 @@ export default function GameFramework({
           if (newScore >= 100) {
             clearInterval(interval);
             setIsPlaying(false);
+            // Store the score in the database
+            storeGameScore(newScore);
             Alert.alert('Game Complete!', `You scored ${newScore}!`, [
               { text: 'OK', onPress: () => onComplete?.(newScore) }
             ]);

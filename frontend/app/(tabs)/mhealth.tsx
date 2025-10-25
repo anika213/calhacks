@@ -17,6 +17,7 @@ export default function MentalGameTab() {
           description="Gentle mood and mindfulness exercises for daily balance."
           color="#8B6B8B"
           questions={moodQuestions}
+          gameType="mental_health"
           onComplete={(score) => console.log('Mental health game finished with', score)}
         />
       </ScrollView>
