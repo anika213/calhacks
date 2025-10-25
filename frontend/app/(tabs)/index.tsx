@@ -33,6 +33,18 @@ export default function HomeScreen() {
           <Text style={styles.primaryButtonText}>Start Daily Check-In</Text>
         </TouchableOpacity>
 
+        {/* Chat Button */}
+        <TouchableOpacity
+          style={styles.chatButton}
+          onPress={() => {
+            // TODO: Implement chat functionality
+            console.log('Chat button pressed');
+          }}
+        >
+          <IconSymbol name="message.fill" size={22} color="#6B8E6B" />
+          <Text style={styles.chatButtonText}>Chat to Me</Text>
+        </TouchableOpacity>
+
         {/* Section Divider
         <Text style={styles.sectionTitle}>Your Tools for Growth</Text> */}
 {/* 
@@ -123,6 +135,23 @@ const styles = StyleSheet.create({
   },
   primaryButtonText: {
     color: '#fff',
+    fontSize: 20,
+    fontWeight: '600',
+    marginLeft: 10,
+  },
+  chatButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'transparent',
+    paddingVertical: 18,
+    borderRadius: 20,
+    borderWidth: 2,
+    borderColor: '#6B8E6B',
+    marginTop: 16,
+  },
+  chatButtonText: {
+    color: '#6B8E6B',
     fontSize: 20,
     fontWeight: '600',
     marginLeft: 10,

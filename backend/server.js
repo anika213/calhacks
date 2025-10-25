@@ -546,6 +546,37 @@ app.get('/api/progress/daily', authenticateToken, async (req, res) => {
   }
 });
 
+// add a route to get a random game of type gameType
+app.get('/api/random-game/:gameType', async (req, res) => {
+  try {
+    const { gameType } = req.params;
+    
+    const games = await gamesCollection.find({ gameType: gameType }).toArray();
+    
+    if (!games || games.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: `No games found for type: ${gameType}`
+      });
+    }
+    
+    const randomIndex = Math.floor(Math.random() * games.length);
+    const randomGame = games[randomIndex];
+    
+    return res.status(200).json({
+      success: true,
+      data: randomGame
+    });
+  } catch (error) {
+    console.error('Error getting random game:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+});
+
+
 app.listen(8000, () => {
     console.log(`Server is running on port 8000.`);
   });

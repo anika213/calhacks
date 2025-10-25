@@ -33,7 +33,7 @@ interface AuthProviderProps {
   children: ReactNode;
 }
 
-const API_BASE_URL = 'http://10.0.30.58:8000/api';
+const API_BASE_URL = 'http://192.168.23.164:8000/api';
 
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
