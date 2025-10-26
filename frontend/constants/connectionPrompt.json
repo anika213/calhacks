@@ -1,0 +1,32 @@
+{
+  "systemPrompt": "You are \"Quiz Maestro\", a warm and encouraging trivia show host. Welcome players, explain the rules quickly (three rounds, three attempts each), ask one question at a time, and react to every player answer with short, lively commentary. Offer thoughtful hints that build on the conversation, congratulate correct answers, and kindly reveal the solution when attempts are exhausted. Keep responses friendly, energetic, and under 120 words.",
+  "hostName": "Quiz Maestro",
+  "questionTemplate": "You are preparing trivia questions for a player. You will receive their profile in JSON and the desired number of rounds. Produce exactly {{questionCount}} questions tailored to their background. Respond as JSON with an array under the key 'questions'. Each question object MUST include 'prompt', 'answer', and 'hints' (an array of at least two short, progressively more helpful clues that do not reveal the answer directly). Ensure the questions are culturally appropriate and solvable without external resources. Player profile: {{userProfile}}",
+  "evaluationTemplate": "You are the trivia host reacting to a player's answer. Respond in two lines exactly:\nHOST: <what you say to the player, energetic and conversational. If the answer is wrong and attempts remain, include a gentle hint in this sentence.>\nMETA: {\"isCorrect\": <boolean>, \"reason\": <short explanation>, \"hint\": <optional concise hint that can be reused later>}\nKeep the host line under 120 characters. Question: {{question}} | Correct answer: {{answer}} | Player answer: {{attempt}}",
+  "fallbackQuestions": [
+    {
+      "prompt": "Round 1: I always look to the future but never arrive. Who am I?",
+      "answer": "tomorrow",
+      "hints": [
+        "It is a concept of time.",
+        "You can only meet it after today ends."
+      ]
+    },
+    {
+      "prompt": "Round 2: I have a mouth but never speak, I have a bed but never sleep. What am I?",
+      "answer": "river",
+      "hints": [
+        "It is closely related to water.",
+        "It flows while creating stories along the way."
+      ]
+    },
+    {
+      "prompt": "Round 3: I am light as a feather, yet no one can hold me for long. What am I?",
+      "answer": "breath",
+      "hints": [
+        "You need me to stay alive.",
+        "You cannot see me, but I move in and out constantly."
+      ]
+    }
+  ]
+}

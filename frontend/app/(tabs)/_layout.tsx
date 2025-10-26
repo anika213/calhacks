@@ -51,7 +51,15 @@ export default function TabLayout() {
         }}
       />
 
-<Tabs.Screen
+      <Tabs.Screen
+        name="connection"
+        options={{
+          title: 'Connection',
+          tabBarIcon: ({ color }) => <IconSymbol size={28} name="bubble.left.and.bubble.right.fill" color={color} />,
+        }}
+      />
+
+      <Tabs.Screen
         name="login"
         options={{
           title: user ? 'Profile' : 'Login',

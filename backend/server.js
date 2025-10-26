@@ -2,6 +2,8 @@ const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const http = require('http');
+const { Server } = require('socket.io');
 
 // const { RateLimiterMemory } = require('rate-limiter-flexible');
 const { MongoClient, GridFSBucket, ObjectId } = require("mongodb");
@@ -10,6 +12,8 @@ const mongoose = require("mongoose");
 const stream = require('stream');
 
 const axios= require("axios");
+const path = require('path');
+const connectionPromptConfig = require(path.resolve(__dirname, '../frontend/constants/connectionPrompt.json'));
 const app = express();
 const router = express.Router()
 
@@ -19,6 +23,8 @@ const client = new MongoClient(uri);
 const database = client.db(process.env.DATABASE_NAME);
 const usersCollection = database.collection("users");
 const gamesCollection = database.collection("games");
+const friendshipsCollection = database.collection('friendships');
+const lobbiesCollection = database.collection('lobbies');
 const gameSessionsCollection = database.collection("gameSessions");
 const userMetricsCollection = database.collection("userMetrics");
 
@@ -34,6 +40,61 @@ const GAME_WEIGHTS = {
 const TREND_UP_THRESHOLD = 0.05;
 const TREND_DOWN_THRESHOLD = -0.05;
 
+const FRIEND_STATUS_PENDING = 'pending';
+const FRIEND_STATUS_ACCEPTED = 'accepted';
+const FRIEND_STATUS_DECLINED = 'declined';
+
+const LOBBY_STATUS_WAITING = 'waiting';
+const LOBBY_STATUS_IN_PROGRESS = 'inProgress';
+const LOBBY_STATUS_COMPLETED = 'completed';
+
+const DEFAULT_MAX_PLAYERS = 6;
+const DEFAULT_MAX_ATTEMPTS = 3;
+
+const TRIVIA_API_URL = process.env.TRIVIA_API_URL || 'https://janitorai.com/hackathon/completions';
+const TRIVIA_API_KEY = process.env.TRIVIA_API_KEY || 'calhacks2047';
+
+const socketsByUser = new Map(); // userId -> Set<socketId>
+
+const registerSocketForUser = (userId, socketId) => {
+  const key = userId.toString();
+  const existing = socketsByUser.get(key) || new Set();
+  existing.add(socketId);
+  socketsByUser.set(key, existing);
+};
+
+const unregisterSocketForUser = (userId, socketId) => {
+  const key = userId.toString();
+  const existing = socketsByUser.get(key);
+  if (!existing) {
+    return;
+  }
+  existing.delete(socketId);
+  if (existing.size === 0) {
+    socketsByUser.delete(key);
+  }
+};
+
+const DEFAULT_FALLBACK_QUESTIONS = Array.isArray(connectionPromptConfig.fallbackQuestions) && connectionPromptConfig.fallbackQuestions.length
+  ? connectionPromptConfig.fallbackQuestions
+  : [
+      {
+        prompt: 'Round 1: I grow in rings but I am not a tree. You can eat me raw or cooked and many say I am fun. What am I?',
+        answer: 'mushroom',
+        hints: ['It thrives in damp forests.', 'It is sometimes called a toadstool.'],
+      },
+      {
+        prompt: 'Round 2: I have keys but open no locks, I have space but no rooms. You can enter but cannot go outside. What am I?',
+        answer: 'keyboard',
+        hints: ['You probably use me every day.', 'I usually sit in front of a monitor.'],
+      },
+      {
+        prompt: 'Round 3: I travel the world yet stay in a corner. What am I?',
+        answer: 'stamp',
+        hints: ['You attach me before sending something.', 'Collectors keep albums full of me.'],
+      },
+    ];
+
 const bodyParser = require('body-parser');
 app.use(cors({
     origin: '*',
@@ -41,6 +102,13 @@ app.use(cors({
   
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
+
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: {
+    origin: '*',
+  },
+});
 
 // JWT Secret (in production, use environment variable)
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
@@ -55,6 +123,10 @@ async function connection(){
             gameSessionsCollection.createIndex({ userId: 1, gameKey: 1, completedAt: -1 }),
             gameSessionsCollection.createIndex({ userId: 1, sessionNumber: 1 }),
             userMetricsCollection.createIndex({ userId: 1 }, { unique: true }),
+            friendshipsCollection.createIndex({ requesterId: 1, addresseeId: 1 }, { unique: true }),
+            friendshipsCollection.createIndex({ addresseeId: 1, status: 1 }),
+            friendshipsCollection.createIndex({ requesterId: 1, status: 1 }),
+            lobbiesCollection.createIndex({ status: 1, updatedAt: -1 }),
         ]);
         console.log("ensured indexes for session analytics");
        
@@ -450,6 +522,577 @@ const computeStreak = (sessions = []) => {
   return streak;
 };
 
+const sanitizeUserSummary = user => {
+  if (!user) {
+    return null;
+  }
+  return {
+    id: user._id.toString(),
+    name: user.name,
+    email: user.email,
+    age: user.age ?? null,
+    preferredLanguage: user.preferredLanguage ?? null,
+  };
+};
+
+const toObjectId = value => (value instanceof ObjectId ? value : new ObjectId(value));
+
+const fetchUsersByIds = async ids => {
+  if (!ids.length) {
+    return new Map();
+  }
+  const objectIds = ids.map(id => new ObjectId(id));
+  const users = await usersCollection.find({ _id: { $in: objectIds } }).toArray();
+  return new Map(users.map(user => [user._id.toString(), user]));
+};
+
+const getFriendshipKey = (a, b) => {
+  const [first, second] = [a, b].map(id => id.toString()).sort();
+  return `${first}:${second}`;
+};
+
+const buildFriendSnapshot = async userObjectId => {
+  const userIdStr = userObjectId.toString();
+  const friendships = await friendshipsCollection.find({
+    $or: [
+      { requesterId: userObjectId },
+      { addresseeId: userObjectId },
+    ],
+  }).toArray();
+
+  const relatedUserIds = new Set();
+  friendships.forEach(doc => {
+    relatedUserIds.add(doc.requesterId.toString());
+    relatedUserIds.add(doc.addresseeId.toString());
+  });
+  relatedUserIds.delete(userIdStr);
+  const usersMap = await fetchUsersByIds(Array.from(relatedUserIds));
+
+  const friends = [];
+  const incoming = [];
+  const outgoing = [];
+
+  friendships.forEach(doc => {
+    const isRequester = doc.requesterId.toString() === userIdStr;
+    const counterpartId = isRequester ? doc.addresseeId.toString() : doc.requesterId.toString();
+    const counterpart = sanitizeUserSummary(usersMap.get(counterpartId));
+    if (!counterpart) {
+      return;
+    }
+    const payload = {
+      id: doc._id.toString(),
+      user: counterpart,
+      status: doc.status,
+      createdAt: doc.createdAt,
+      updatedAt: doc.updatedAt,
+    };
+    if (doc.status === FRIEND_STATUS_ACCEPTED) {
+      friends.push(payload);
+    } else if (doc.status === FRIEND_STATUS_PENDING) {
+      if (isRequester) {
+        outgoing.push(payload);
+      } else {
+        incoming.push(payload);
+      }
+    }
+  });
+
+  return { friends, incoming, outgoing };
+};
+
+const emitFriendSnapshot = async userId => {
+  const sockets = socketsByUser.get(userId.toString());
+  if (!sockets || !sockets.size) {
+    return;
+  }
+  const snapshot = await buildFriendSnapshot(new ObjectId(userId));
+  sockets.forEach(socketId => {
+    io.to(socketId).emit('friend:update', snapshot);
+  });
+};
+
+const sanitizeLobby = (lobby, viewerId) => {
+  if (!lobby) {
+    return null;
+  }
+  const viewerStr = viewerId ? viewerId.toString() : null;
+  const players = lobby.players?.map(player => ({
+    userId: player.userId.toString(),
+    score: player.score ?? 0,
+    order: player.order,
+    joinedAt: player.joinedAt,
+    isHost: lobby.hostId.toString() === player.userId.toString(),
+    isYou: viewerStr === player.userId.toString(),
+    profile: player.profile || null,
+  })) || [];
+
+  const questions = (lobby.questions || []).map(question => ({
+    id: question.id,
+    prompt: question.prompt,
+    hints: question.hints || [],
+    completed: question.completed || false,
+    winnerId: question.winnerId ? question.winnerId.toString() : null,
+    attempts: (question.attempts || []).map(attempt => ({
+      userId: attempt.userId.toString(),
+      response: attempt.response,
+      createdAt: attempt.createdAt,
+      isCorrect: attempt.isCorrect,
+    })),
+  }));
+
+  return {
+    id: lobby._id.toString(),
+    hostId: lobby.hostId.toString(),
+    status: lobby.status,
+    maxPlayers: lobby.maxPlayers,
+    currentQuestionIndex: lobby.currentQuestionIndex ?? 0,
+    currentTurnIndex: lobby.currentTurnIndex ?? 0,
+    players,
+    questions,
+    createdAt: lobby.createdAt,
+    updatedAt: lobby.updatedAt,
+  };
+};
+
+const lobbyRoom = lobbyId => `lobby:${lobbyId.toString()}`;
+
+const emitLobbyUpdate = async lobbyId => {
+  const lobbyObjectId = typeof lobbyId === 'string' ? new ObjectId(lobbyId) : lobbyId;
+  const lobby = await lobbiesCollection.findOne({ _id: lobbyObjectId });
+  if (!lobby) {
+    return;
+  }
+  io.to(lobbyRoom(lobbyObjectId.toString())).emit('lobby:update', sanitizeLobby(lobby));
+};
+
+const getUserProfileForTrivia = user => ({
+  userId: user._id,
+  name: user.name ?? null,
+  age: user.age ?? null,
+  gender: user.gender ?? null,
+  nationality: user.nationality ?? null,
+  preferredLanguage: user.preferredLanguage ?? null,
+});
+
+const areUsersFriends = async (userA, userB) => {
+  const userAId = toObjectId(userA);
+  const userBId = toObjectId(userB);
+  if (userAId.equals(userBId)) {
+    return true;
+  }
+  const friendship = await friendshipsCollection.findOne({
+    status: FRIEND_STATUS_ACCEPTED,
+    $or: [
+      { requesterId: userAId, addresseeId: userBId },
+      { requesterId: userBId, addresseeId: userAId },
+    ],
+  });
+  return Boolean(friendship);
+};
+
+const replaceTemplateTokens = (template, values) => {
+  let output = template;
+  Object.entries(values).forEach(([key, value]) => {
+    const pattern = new RegExp(`{{\\s*${key}\\s*}}`, 'gi');
+    output = output.replace(pattern, value);
+  });
+  return output;
+};
+
+const callTriviaService = async (messages, onToken) => {
+  try {
+    const response = await fetch(TRIVIA_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: TRIVIA_API_KEY,
+      },
+      body: JSON.stringify({ messages }),
+    });
+
+    if (!response.ok) {
+      console.error('Trivia service error', response.status, await response.text());
+      return null;
+    }
+
+    const raw = await collectStreamedContent(response, onToken);
+    const aggregated = aggregateStreamContent(raw);
+    return sanitizeControlCharacters(aggregated);
+  } catch (error) {
+    console.error('Trivia service request failed', error);
+    return null;
+  }
+};
+
+const buildMultiplayerProfileSummary = players => {
+  const summary = players.map(player => ({
+    userId: player.userId.toString(),
+    name: player.name ?? null,
+    age: player.age ?? null,
+    gender: player.gender ?? null,
+    nationality: player.nationality ?? null,
+    preferredLanguage: player.preferredLanguage ?? null,
+  }));
+  return JSON.stringify(summary);
+};
+
+const generateLobbyQuestions = async (players, questionCount) => {
+  const template = connectionPromptConfig.questionTemplate
+    || 'Create {{questionCount}} trivia questions tailored to the following players: {{userProfile}}';
+
+  const userProfile = buildMultiplayerProfileSummary(players);
+  const userPrompt = replaceTemplateTokens(template, {
+    questionCount: String(questionCount),
+    userProfile,
+  });
+
+  const content = await callTriviaService([
+    { role: 'system', content: connectionPromptConfig.systemPrompt || 'You are a friendly trivia host.' },
+    { role: 'user', content: userPrompt },
+  ]);
+
+  if (!content) {
+    return DEFAULT_FALLBACK_QUESTIONS.slice(0, questionCount).map((item, index) => ({
+      id: `fallback-${Date.now()}-${index}`,
+      prompt: item.prompt,
+      answer: item.answer,
+      hints: item.hints || [],
+      attempts: [],
+      completed: false,
+    }));
+  }
+
+  const parsed = tryParseJSON(content);
+  if (!parsed?.questions || !Array.isArray(parsed.questions)) {
+    console.warn('Trivia question response malformed, using fallback');
+    return DEFAULT_FALLBACK_QUESTIONS.slice(0, questionCount).map((item, index) => ({
+      id: `fallback-${Date.now()}-${index}`,
+      prompt: item.prompt,
+      answer: item.answer,
+      hints: item.hints || [],
+      attempts: [],
+      completed: false,
+    }));
+  }
+
+  return parsed.questions.slice(0, questionCount).map((item, index) => ({
+    id: item.id || `question-${Date.now()}-${index}`,
+    prompt: item.prompt,
+    answer: item.answer,
+    hints: item.hints || [],
+    attempts: [],
+    completed: false,
+  }));
+};
+
+const evaluateLobbyAttempt = async (question, attempt, onToken) => {
+  const template = connectionPromptConfig.evaluationTemplate
+    || 'Question: {{question}} | Correct answer: {{answer}} | Player answer: {{attempt}}. Return JSON {"isCorrect": boolean, "reason": string}';
+
+  const userPrompt = replaceTemplateTokens(template, {
+    question: question.prompt,
+    answer: question.answer,
+    attempt,
+  });
+
+  const content = await callTriviaService([
+    { role: 'system', content: connectionPromptConfig.systemPrompt || 'You are a friendly trivia host.' },
+    { role: 'user', content: userPrompt },
+  ], onToken);
+
+  if (!content) {
+    return evaluateLocally(question, attempt);
+  }
+
+  const cleaned = sanitizeControlCharacters(content);
+  const hostMatch = cleaned.match(/HOST:\s*([\s\S]*?)(?:\n|$)/i);
+  const metaMatch = cleaned.match(/META:\s*(\{[\s\S]*\})/i);
+  let meta = null;
+  if (metaMatch) {
+    meta = tryParseJSON(metaMatch[1]);
+  }
+
+  const hostResponse = hostMatch ? hostMatch[1].trim() : undefined;
+
+  if (!meta) {
+    const fallback = evaluateLocally(question, attempt);
+    return {
+      ...fallback,
+      hostResponse: hostResponse || fallback.hostResponse,
+    };
+  }
+
+  return {
+    isCorrect: Boolean(meta.isCorrect),
+    reason: meta.reason || '',
+    hint: meta.hint,
+    hostResponse: hostResponse || meta.reason,
+  };
+};
+
+const createLobbyDocument = async (hostId, maxPlayers = DEFAULT_MAX_PLAYERS) => {
+  const hostObjectId = toObjectId(hostId);
+  const hostUser = await usersCollection.findOne({ _id: hostObjectId });
+  if (!hostUser) {
+    throw new Error('Host user not found');
+  }
+
+  const now = new Date();
+  const lobby = {
+    hostId: hostObjectId,
+    status: LOBBY_STATUS_WAITING,
+    maxPlayers: Math.min(Math.max(2, Number(maxPlayers) || DEFAULT_MAX_PLAYERS), DEFAULT_MAX_PLAYERS),
+    players: [{
+      userId: hostObjectId,
+      order: 0,
+      score: 0,
+      joinedAt: now,
+      profile: sanitizeUserSummary(hostUser),
+    }],
+    questions: [],
+    currentQuestionIndex: 0,
+    currentTurnIndex: 0,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  const result = await lobbiesCollection.insertOne(lobby);
+  lobby._id = result.insertedId;
+  return lobby;
+};
+
+const addPlayerToLobby = async (lobbyId, userId) => {
+  const lobbyObjectId = toObjectId(lobbyId);
+  const lobby = await lobbiesCollection.findOne({ _id: lobbyObjectId });
+  if (!lobby) {
+    throw new Error('Lobby not found');
+  }
+  if (lobby.status !== LOBBY_STATUS_WAITING) {
+    throw new Error('Lobby already in progress');
+  }
+  const players = lobby.players || [];
+  if (players.find(player => player.userId.equals(userId))) {
+    return lobby;
+  }
+  if (players.length >= lobby.maxPlayers) {
+    throw new Error('Lobby is full');
+  }
+
+  const user = await usersCollection.findOne({ _id: userId });
+  if (!user) {
+    throw new Error('User not found');
+  }
+
+  const isFriend = await areUsersFriends(lobby.hostId, userId);
+  if (!isFriend) {
+    throw new Error('Only friends can join this lobby');
+  }
+
+  const order = players.length;
+  const updated = await lobbiesCollection.findOneAndUpdate(
+    { _id: lobbyObjectId },
+    {
+      $push: {
+        players: {
+          userId,
+          order,
+          score: 0,
+          joinedAt: new Date(),
+          profile: sanitizeUserSummary(user),
+        },
+      },
+      $set: { updatedAt: new Date() },
+    },
+    { returnDocument: 'after' },
+  );
+
+  return updated.value;
+};
+
+const removePlayerFromLobby = async (lobbyId, userId) => {
+  const lobbyObjectId = toObjectId(lobbyId);
+  const lobby = await lobbiesCollection.findOne({ _id: lobbyObjectId });
+  if (!lobby) {
+    return null;
+  }
+
+  const userIdStr = userId.toString();
+  const players = (lobby.players || []).filter(player => player.userId.toString() !== userIdStr);
+
+  if (!players.length) {
+    await lobbiesCollection.deleteOne({ _id: lobbyObjectId });
+    return null;
+  }
+
+  // Normalize order and assign new host if needed
+  players.sort((a, b) => a.order - b.order);
+  players.forEach((player, index) => { player.order = index; });
+
+  const newHostId = lobby.hostId.toString() === userIdStr ? players[0].userId : lobby.hostId;
+
+  const updated = await lobbiesCollection.findOneAndUpdate(
+    { _id: lobbyObjectId },
+    {
+      $set: {
+        hostId: newHostId,
+        players,
+        updatedAt: new Date(),
+      },
+    },
+    { returnDocument: 'after' },
+  );
+
+  return updated.value;
+};
+
+const advanceTurn = (lobby, currentPlayerIndex) => {
+  const playerCount = lobby.players.length;
+  const question = lobby.questions[lobby.currentQuestionIndex];
+  const attemptedSet = new Set((question.attempts || []).map(attempt => attempt.userId.toString()));
+
+  let nextIndex = (currentPlayerIndex + 1) % playerCount;
+  for (let i = 0; i < playerCount; i += 1) {
+    const candidateIndex = (currentPlayerIndex + 1 + i) % playerCount;
+    const candidate = lobby.players[candidateIndex];
+    if (!attemptedSet.has(candidate.userId.toString())) {
+      nextIndex = candidateIndex;
+      break;
+    }
+  }
+  lobby.currentTurnIndex = nextIndex;
+};
+
+const prepareNextQuestion = (lobby, startingIndex = 0) => {
+  lobby.currentQuestionIndex += 1;
+  lobby.currentTurnIndex = startingIndex % lobby.players.length;
+  lobby.updatedAt = new Date();
+  if (lobby.currentQuestionIndex >= lobby.questions.length) {
+    lobby.status = LOBBY_STATUS_COMPLETED;
+  }
+};
+
+const startLobbySession = async lobbyId => {
+  const lobbyObjectId = toObjectId(lobbyId);
+  const lobby = await lobbiesCollection.findOne({ _id: lobbyObjectId });
+  if (!lobby) {
+    throw new Error('Lobby not found');
+  }
+  if (lobby.status !== LOBBY_STATUS_WAITING) {
+    throw new Error('Lobby already started');
+  }
+  if ((lobby.players || []).length < 2) {
+    throw new Error('At least two players required for multiplayer');
+  }
+
+  const playerProfiles = await Promise.all(
+    lobby.players.map(async player => {
+      if (player.profile) {
+        return {
+          userId: player.userId,
+          ...player.profile,
+        };
+      }
+      const user = await usersCollection.findOne({ _id: player.userId });
+      return getUserProfileForTrivia(user);
+    }),
+  );
+
+  const questionCount = Math.min(DEFAULT_FALLBACK_QUESTIONS.length, lobby.players.length + 1);
+  const questions = await generateLobbyQuestions(playerProfiles, questionCount);
+
+  const updated = await lobbiesCollection.findOneAndUpdate(
+    { _id: lobbyObjectId },
+    {
+      $set: {
+        status: LOBBY_STATUS_IN_PROGRESS,
+        questions,
+        currentQuestionIndex: 0,
+        currentTurnIndex: 0,
+        updatedAt: new Date(),
+      },
+    },
+    { returnDocument: 'after' },
+  );
+
+  return updated.value;
+};
+
+const handleLobbyAttempt = async (lobbyId, userId, attempt, onToken) => {
+  const lobbyObjectId = toObjectId(lobbyId);
+  const lobby = await lobbiesCollection.findOne({ _id: lobbyObjectId });
+  if (!lobby) {
+    throw new Error('Lobby not found');
+  }
+  if (lobby.status !== LOBBY_STATUS_IN_PROGRESS) {
+    throw new Error('Lobby not in progress');
+  }
+
+  const playerIndex = (lobby.players || []).findIndex(player => player.userId.equals(userId));
+  if (playerIndex === -1) {
+    throw new Error('Player not part of lobby');
+  }
+  if (playerIndex !== lobby.currentTurnIndex) {
+    throw new Error('Not your turn');
+  }
+
+  const question = lobby.questions[lobby.currentQuestionIndex];
+  if (!question) {
+    throw new Error('No active question');
+  }
+
+  const evaluation = await evaluateLobbyAttempt(question, attempt, onToken);
+  const attemptRecord = {
+    userId,
+    response: attempt,
+    createdAt: new Date(),
+    isCorrect: evaluation.isCorrect,
+  };
+  question.attempts = question.attempts || [];
+  question.attempts.push(attemptRecord);
+
+  if (evaluation.isCorrect) {
+    question.completed = true;
+    question.winnerId = userId;
+    lobby.players[playerIndex].score = (lobby.players[playerIndex].score || 0) + 1;
+    lobby.updatedAt = new Date();
+
+    if (lobby.currentQuestionIndex + 1 < lobby.questions.length) {
+      prepareNextQuestion(lobby, playerIndex);
+    } else {
+      lobby.status = LOBBY_STATUS_COMPLETED;
+    }
+  } else {
+    question.completed = false;
+    question.winnerId = null;
+    const attemptsByUsers = new Set(question.attempts.map(attemptItem => attemptItem.userId.toString()));
+    if (attemptsByUsers.size >= lobby.players.length) {
+      question.completed = true;
+      lobby.updatedAt = new Date();
+      if (lobby.currentQuestionIndex + 1 < lobby.questions.length) {
+        prepareNextQuestion(lobby);
+      } else {
+        lobby.status = LOBBY_STATUS_COMPLETED;
+      }
+    } else {
+      advanceTurn(lobby, playerIndex);
+      lobby.updatedAt = new Date();
+    }
+  }
+
+  await lobbiesCollection.updateOne({ _id: lobbyObjectId }, {
+    $set: {
+      questions: lobby.questions,
+      players: lobby.players,
+      status: lobby.status,
+      currentQuestionIndex: lobby.currentQuestionIndex,
+      currentTurnIndex: lobby.currentTurnIndex,
+      updatedAt: lobby.updatedAt || new Date(),
+    },
+  });
+
+  return { lobby, evaluation };
+};
+
 const serializePerGameMetrics = perGame => {
   const result = {};
   Object.entries(perGame || {}).forEach(([gameKey, value]) => {
@@ -729,6 +1372,249 @@ app.get('/api/auth/me', authenticateToken, async (req, res) => {
       success: false,
       message: 'Internal server error'
     });
+  }
+});
+
+// Friends API
+app.get('/api/friends', authenticateToken, async (req, res) => {
+  try {
+    const userId = toObjectId(req.user.userId);
+    const snapshot = await buildFriendSnapshot(userId);
+    res.status(200).json({ success: true, data: snapshot });
+  } catch (error) {
+    console.error('Error fetching friends snapshot', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch friends' });
+  }
+});
+
+app.post('/api/friends/requests', authenticateToken, async (req, res) => {
+  try {
+    const userId = toObjectId(req.user.userId);
+    const { targetUserId } = req.body;
+
+    if (!targetUserId) {
+      return res.status(400).json({ success: false, message: 'targetUserId is required' });
+    }
+
+    if (userId.toString() === targetUserId) {
+      return res.status(400).json({ success: false, message: 'Cannot add yourself as a friend' });
+    }
+
+    const targetObjectId = toObjectId(targetUserId);
+    const targetUser = await usersCollection.findOne({ _id: targetObjectId });
+    if (!targetUser) {
+      return res.status(404).json({ success: false, message: 'Target user not found' });
+    }
+
+    const existing = await friendshipsCollection.findOne({
+      $or: [
+        { requesterId: userId, addresseeId: targetObjectId },
+        { requesterId: targetObjectId, addresseeId: userId },
+      ],
+    });
+
+    if (existing) {
+      if (existing.status === FRIEND_STATUS_ACCEPTED) {
+        return res.status(409).json({ success: false, message: 'You are already friends' });
+      }
+      if (existing.requesterId.equals(targetObjectId) && existing.addresseeId.equals(userId)) {
+        await friendshipsCollection.updateOne(
+          { _id: existing._id },
+          { $set: { status: FRIEND_STATUS_ACCEPTED, updatedAt: new Date() } },
+        );
+        await emitFriendSnapshot(userId);
+        await emitFriendSnapshot(targetObjectId);
+        return res.status(200).json({ success: true, data: { status: FRIEND_STATUS_ACCEPTED } });
+      }
+      return res.status(409).json({ success: false, message: 'Friend request already pending' });
+    }
+
+    const now = new Date();
+    await friendshipsCollection.insertOne({
+      requesterId: userId,
+      addresseeId: targetObjectId,
+      status: FRIEND_STATUS_PENDING,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await emitFriendSnapshot(userId);
+    await emitFriendSnapshot(targetObjectId);
+
+    res.status(201).json({ success: true, message: 'Friend request sent' });
+  } catch (error) {
+    console.error('Error sending friend request', error);
+    res.status(500).json({ success: false, message: 'Failed to send friend request' });
+  }
+});
+
+app.post('/api/friends/requests/:id/accept', authenticateToken, async (req, res) => {
+  try {
+    const userId = toObjectId(req.user.userId);
+    const { id } = req.params;
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({ success: false, message: 'Invalid request id' });
+    }
+    const requestId = new ObjectId(id);
+    const friendship = await friendshipsCollection.findOne({ _id: requestId });
+    if (!friendship) {
+      return res.status(404).json({ success: false, message: 'Friend request not found' });
+    }
+    if (!friendship.addresseeId.equals(userId)) {
+      return res.status(403).json({ success: false, message: 'Not authorized to accept this request' });
+    }
+
+    await friendshipsCollection.updateOne({ _id: requestId }, {
+      $set: { status: FRIEND_STATUS_ACCEPTED, updatedAt: new Date() },
+    });
+
+    await emitFriendSnapshot(userId);
+    await emitFriendSnapshot(friendship.requesterId);
+
+    res.status(200).json({ success: true, message: 'Friend request accepted' });
+  } catch (error) {
+    console.error('Error accepting friend request', error);
+    res.status(500).json({ success: false, message: 'Failed to accept friend request' });
+  }
+});
+
+app.delete('/api/friends/:id', authenticateToken, async (req, res) => {
+  try {
+    const userId = toObjectId(req.user.userId);
+    const { id } = req.params;
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({ success: false, message: 'Invalid friendship id' });
+    }
+    const friendshipId = new ObjectId(id);
+    const friendship = await friendshipsCollection.findOne({ _id: friendshipId });
+    if (!friendship) {
+      return res.status(404).json({ success: false, message: 'Friendship not found' });
+    }
+    if (!friendship.requesterId.equals(userId) && !friendship.addresseeId.equals(userId)) {
+      return res.status(403).json({ success: false, message: 'Not authorized to modify this friendship' });
+    }
+
+    await friendshipsCollection.deleteOne({ _id: friendshipId });
+
+    await emitFriendSnapshot(friendship.requesterId);
+    await emitFriendSnapshot(friendship.addresseeId);
+
+    res.status(200).json({ success: true, message: 'Friendship removed' });
+  } catch (error) {
+    console.error('Error removing friendship', error);
+    res.status(500).json({ success: false, message: 'Failed to remove friendship' });
+  }
+});
+
+// Lobby REST API (fallback for socket-enabled flows)
+app.post('/api/lobbies', authenticateToken, async (req, res) => {
+  try {
+    const userId = toObjectId(req.user.userId);
+    const { maxPlayers } = req.body;
+    const lobby = await createLobbyDocument(userId, maxPlayers);
+    await emitLobbyUpdate(lobby._id);
+    res.status(201).json({ success: true, data: sanitizeLobby(lobby, userId) });
+  } catch (error) {
+    console.error('Error creating lobby', error);
+    res.status(500).json({ success: false, message: error.message || 'Failed to create lobby' });
+  }
+});
+
+app.get('/api/lobbies', authenticateToken, async (req, res) => {
+  try {
+    const userId = toObjectId(req.user.userId);
+    const friendIds = await friendshipsCollection.find({
+      status: FRIEND_STATUS_ACCEPTED,
+      $or: [
+        { requesterId: userId },
+        { addresseeId: userId },
+      ],
+    }).toArray();
+
+    const friendIdSet = new Set(friendIds.map(doc => (
+      doc.requesterId.equals(userId) ? doc.addresseeId.toString() : doc.requesterId.toString()
+    )));
+
+    const waitingLobbies = await lobbiesCollection.find({ status: LOBBY_STATUS_WAITING }).sort({ updatedAt: -1 }).limit(50).toArray();
+    const accessible = waitingLobbies.filter(lobby => friendIdSet.has(lobby.hostId.toString()) || lobby.hostId.equals(userId));
+    const sanitized = accessible.map(lobby => sanitizeLobby(lobby, userId));
+    res.status(200).json({ success: true, data: sanitized });
+  } catch (error) {
+    console.error('Error listing lobbies', error);
+    res.status(500).json({ success: false, message: 'Failed to list lobbies' });
+  }
+});
+
+app.get('/api/lobbies/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({ success: false, message: 'Invalid lobby id' });
+    }
+    const lobby = await lobbiesCollection.findOne({ _id: new ObjectId(id) });
+    if (!lobby) {
+      return res.status(404).json({ success: false, message: 'Lobby not found' });
+    }
+    res.status(200).json({ success: true, data: sanitizeLobby(lobby, req.user.userId) });
+  } catch (error) {
+    console.error('Error fetching lobby', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch lobby' });
+  }
+});
+
+app.post('/api/lobbies/:id/join', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({ success: false, message: 'Invalid lobby id' });
+    }
+    const lobby = await addPlayerToLobby(new ObjectId(id), toObjectId(req.user.userId));
+    await emitLobbyUpdate(id);
+    res.status(200).json({ success: true, data: sanitizeLobby(lobby, req.user.userId) });
+  } catch (error) {
+    console.error('Error joining lobby', error);
+    res.status(400).json({ success: false, message: error.message || 'Failed to join lobby' });
+  }
+});
+
+app.post('/api/lobbies/:id/leave', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({ success: false, message: 'Invalid lobby id' });
+    }
+    const lobby = await removePlayerFromLobby(new ObjectId(id), toObjectId(req.user.userId));
+    if (lobby) {
+      await emitLobbyUpdate(id);
+      res.status(200).json({ success: true, data: sanitizeLobby(lobby, req.user.userId) });
+    } else {
+      res.status(200).json({ success: true, message: 'Lobby closed' });
+    }
+  } catch (error) {
+    console.error('Error leaving lobby', error);
+    res.status(400).json({ success: false, message: error.message || 'Failed to leave lobby' });
+  }
+});
+
+app.post('/api/lobbies/:id/start', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({ success: false, message: 'Invalid lobby id' });
+    }
+    const lobby = await lobbiesCollection.findOne({ _id: new ObjectId(id) });
+    if (!lobby) {
+      return res.status(404).json({ success: false, message: 'Lobby not found' });
+    }
+    if (!lobby.hostId.equals(toObjectId(req.user.userId))) {
+      return res.status(403).json({ success: false, message: 'Only the host can start the lobby' });
+    }
+    const updated = await startLobbySession(id);
+    await emitLobbyUpdate(id);
+    res.status(200).json({ success: true, data: sanitizeLobby(updated, req.user.userId) });
+  } catch (error) {
+    console.error('Error starting lobby', error);
+    res.status(400).json({ success: false, message: error.message || 'Failed to start lobby' });
   }
 });
 
@@ -1379,6 +2265,174 @@ app.get('/api/progress/daily', authenticateToken, async (req, res) => {
   }
 });
 
-app.listen(8000, () => {
-    console.log(`Server is running on port 8000.`);
+io.on('connection', socket => {
+  const token = socket.handshake.auth?.token || socket.handshake.query?.token;
+  if (!token) {
+    socket.emit('error', 'Unauthorized');
+    socket.disconnect(true);
+    return;
+  }
+
+  let userId;
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    userId = decoded.userId ? decoded.userId.toString() : decoded.id;
+    if (!userId) {
+      throw new Error('Invalid token payload');
+    }
+  } catch (error) {
+    socket.emit('error', 'Unauthorized');
+    socket.disconnect(true);
+    return;
+  }
+
+  registerSocketForUser(userId, socket.id);
+  socket.join(`user:${userId}`);
+
+  emitFriendSnapshot(userId).catch(err => console.error('Failed to emit friend snapshot', err));
+
+  socket.on('friend:list', async callback => {
+    try {
+      const snapshot = await buildFriendSnapshot(toObjectId(userId));
+      if (typeof callback === 'function') {
+        callback({ success: true, data: snapshot });
+      } else {
+        socket.emit('friend:update', snapshot);
+      }
+    } catch (error) {
+      console.error('Socket friend:list error', error);
+      if (typeof callback === 'function') {
+        callback({ success: false, message: 'Failed to load friends' });
+      }
+    }
   });
+
+  socket.on('lobby:create', async (payload = {}, callback) => {
+    try {
+      const lobby = await createLobbyDocument(toObjectId(userId), payload.maxPlayers);
+      socket.join(lobbyRoom(lobby._id.toString()));
+      await emitLobbyUpdate(lobby._id);
+      const sanitized = sanitizeLobby(lobby, userId);
+      if (typeof callback === 'function') {
+        callback({ success: true, lobby: sanitized });
+      }
+    } catch (error) {
+      console.error('Socket lobby:create error', error);
+      if (typeof callback === 'function') {
+        callback({ success: false, message: error.message || 'Failed to create lobby' });
+      }
+    }
+  });
+
+  socket.on('lobby:join', async ({ lobbyId }, callback) => {
+    try {
+      if (!ObjectId.isValid(lobbyId)) {
+        throw new Error('Invalid lobby id');
+      }
+      const lobby = await addPlayerToLobby(new ObjectId(lobbyId), toObjectId(userId));
+      socket.join(lobbyRoom(lobbyId));
+      await emitLobbyUpdate(lobbyId);
+      if (typeof callback === 'function') {
+        callback({ success: true, lobby: sanitizeLobby(lobby, userId) });
+      }
+    } catch (error) {
+      console.error('Socket lobby:join error', error);
+      if (typeof callback === 'function') {
+        callback({ success: false, message: error.message || 'Failed to join lobby' });
+      }
+    }
+  });
+
+  socket.on('lobby:leave', async ({ lobbyId }, callback) => {
+    try {
+      if (!ObjectId.isValid(lobbyId)) {
+        throw new Error('Invalid lobby id');
+      }
+      const lobby = await removePlayerFromLobby(new ObjectId(lobbyId), toObjectId(userId));
+      socket.leave(lobbyRoom(lobbyId));
+      if (lobby) {
+        await emitLobbyUpdate(lobbyId);
+      } else {
+        io.to(lobbyRoom(lobbyId)).emit('lobby:closed', { lobbyId });
+        socket.emit('lobby:closed', { lobbyId });
+      }
+      if (typeof callback === 'function') {
+        callback({ success: true, lobbyClosed: !lobby });
+      }
+    } catch (error) {
+      console.error('Socket lobby:leave error', error);
+      if (typeof callback === 'function') {
+        callback({ success: false, message: error.message || 'Failed to leave lobby' });
+      }
+    }
+  });
+
+  socket.on('lobby:start', async ({ lobbyId }, callback) => {
+    try {
+      if (!ObjectId.isValid(lobbyId)) {
+        throw new Error('Invalid lobby id');
+      }
+      const lobby = await lobbiesCollection.findOne({ _id: new ObjectId(lobbyId) });
+      if (!lobby) {
+        throw new Error('Lobby not found');
+      }
+      if (!lobby.hostId.equals(toObjectId(userId))) {
+        throw new Error('Only the host can start the lobby');
+      }
+      const updated = await startLobbySession(lobbyId);
+      await emitLobbyUpdate(lobbyId);
+      if (typeof callback === 'function') {
+        callback({ success: true, lobby: sanitizeLobby(updated, userId) });
+      }
+    } catch (error) {
+      console.error('Socket lobby:start error', error);
+      if (typeof callback === 'function') {
+        callback({ success: false, message: error.message || 'Failed to start lobby' });
+      }
+    }
+  });
+
+  socket.on('lobby:attempt', async ({ lobbyId, answer }, callback) => {
+    try {
+      if (!ObjectId.isValid(lobbyId)) {
+        throw new Error('Invalid lobby id');
+      }
+      const messageId = `host-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      io.to(lobbyRoom(lobbyId)).emit('lobby:hostMessage:start', { lobbyId, messageId, userId });
+
+      const { lobby, evaluation } = await handleLobbyAttempt(
+        lobbyId,
+        toObjectId(userId),
+        answer,
+        token => io.to(lobbyRoom(lobbyId)).emit('lobby:hostMessage:token', { lobbyId, messageId, token }),
+      );
+
+      await emitLobbyUpdate(lobbyId);
+      io.to(lobbyRoom(lobbyId)).emit('lobby:hostMessage:end', {
+        lobbyId,
+        messageId,
+        message: evaluation.hostResponse,
+        isCorrect: evaluation.isCorrect,
+        hint: evaluation.hint,
+        userId,
+      });
+
+      if (typeof callback === 'function') {
+        callback({ success: true, evaluation });
+      }
+    } catch (error) {
+      console.error('Socket lobby:attempt error', error);
+      if (typeof callback === 'function') {
+        callback({ success: false, message: error.message || 'Failed to process attempt' });
+      }
+    }
+  });
+
+  socket.on('disconnect', () => {
+    unregisterSocketForUser(userId, socket.id);
+  });
+});
+
+server.listen(8000, () => {
+  console.log('Server is running on port 8000.');
+});
