@@ -46,7 +46,21 @@ interface LobbyQuestion {
     response: string;
     createdAt?: string;
     isCorrect: boolean;
+    elapsedMs?: number;
   }>;
+  startedAt?: number | null;
+  solvedAt?: number | null;
+  solveDurationMs?: number | null;
+}
+
+interface LobbyMessage {
+  id: string;
+  role: 'user' | 'host' | 'system';
+  authorId: string | null;
+  authorName?: string | null;
+  content: string;
+  kind?: string;
+  createdAt?: number;
 }
 
 interface LobbyState {
@@ -58,34 +72,24 @@ interface LobbyState {
   currentTurnIndex: number;
   players: LobbyPlayer[];
   questions: LobbyQuestion[];
+  messages: LobbyMessage[];
   createdAt?: string;
   updatedAt?: string;
-}
-
-interface HostStreamMessage {
-  messageId: string;
-  lobbyId: string;
-  userId: string;
-  content: string;
-  isComplete: boolean;
-  isCorrect?: boolean;
-  hint?: string;
 }
 
 interface FriendLobbyContextValue {
   friends: FriendSnapshot;
   lobby: LobbyState | null;
   availableLobbies: LobbyState[];
-  hostMessages: HostStreamMessage[];
   isConnected: boolean;
   createLobby: (options?: { maxPlayers?: number }) => Promise<void>;
   joinLobby: (lobbyId: string) => Promise<void>;
   leaveLobby: (lobbyId: string) => Promise<void>;
   startLobby: (lobbyId: string) => Promise<void>;
-  submitAttempt: (lobbyId: string, answer: string) => Promise<void>;
+  sendLobbyMessage: (content: string, kind: 'chat' | 'guess') => Promise<void>;
   refreshFriends: () => Promise<void>;
   refreshLobbies: () => Promise<void>;
-  sendFriendRequest: (targetUserId: string) => Promise<void>;
+  sendFriendRequest: (targetUserId: string) => Promise<{ success: boolean; message?: string }>;
   acceptFriendRequest: (friendshipId: string) => Promise<void>;
   removeFriend: (friendshipId: string) => Promise<void>;
 }
@@ -111,7 +115,6 @@ export const FriendLobbyProvider: React.FC<{ children: React.ReactNode }> = ({ c
   const [friends, setFriends] = useState<FriendSnapshot>(defaultSnapshot);
   const [lobby, setLobby] = useState<LobbyState | null>(null);
   const [availableLobbies, setAvailableLobbies] = useState<LobbyState[]>([]);
-  const [hostMessages, setHostMessages] = useState<HostStreamMessage[]>([]);
   const [isConnected, setIsConnected] = useState(false);
   const socketRef = useRef<Socket | null>(null);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -129,7 +132,16 @@ export const FriendLobbyProvider: React.FC<{ children: React.ReactNode }> = ({ c
     });
     if (!response.ok) {
       const text = await response.text();
-      throw new Error(text || 'Request failed');
+      let message = text || 'Request failed';
+      try {
+        const parsed = JSON.parse(text);
+        if (parsed?.message) {
+          message = parsed.message;
+        }
+      } catch {
+        // ignore parse errors, fallback to raw text
+      }
+      throw new Error(message);
     }
     return response.json();
   }, [token]);
@@ -207,41 +219,19 @@ export const FriendLobbyProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
     socket.on('lobby:closed', () => {
       setLobby(null);
-      setHostMessages([]);
       refreshLobbies();
     });
 
-    socket.on('lobby:hostMessage:start', ({ lobbyId, messageId, userId: sourceUserId }) => {
-      setHostMessages(prev => prev.concat({
-        lobbyId,
-        messageId,
-        userId: sourceUserId,
-        content: '',
-        isComplete: false,
-      }));
-    });
-
-    socket.on('lobby:hostMessage:token', ({ messageId, token }) => {
-      setHostMessages(prev => prev.map(item => (
-        item.messageId === messageId
-          ? { ...item, content: `${item.content}${token}` }
-          : item
-      )));
-    });
-
-    socket.on('lobby:hostMessage:end', ({ messageId, message, isCorrect, hint, userId: sourceUserId }) => {
-      setHostMessages(prev => prev.map(item => (
-        item.messageId === messageId
-          ? {
-              ...item,
-              content: message || item.content,
-              isComplete: true,
-              isCorrect,
-              hint,
-              userId: sourceUserId,
-            }
-          : item
-      )));
+    socket.on('lobby:message', ({ lobbyId: incomingLobbyId, message }: { lobbyId: string; message: LobbyMessage }) => {
+      setLobby(prev => {
+        if (!prev || prev.id !== incomingLobbyId) {
+          return prev;
+        }
+        return {
+          ...prev,
+          messages: (prev.messages || []).concat(message),
+        };
+      });
     });
   }, [refreshLobbies, token]);
 
@@ -253,7 +243,6 @@ export const FriendLobbyProvider: React.FC<{ children: React.ReactNode }> = ({ c
     } else {
       setFriends(defaultSnapshot);
       setLobby(null);
-      setHostMessages([]);
       setAvailableLobbies([]);
       if (socketRef.current) {
         socketRef.current.disconnect();
@@ -266,12 +255,6 @@ export const FriendLobbyProvider: React.FC<{ children: React.ReactNode }> = ({ c
       }
     };
   }, [connectSocket, refreshFriends, refreshLobbies, token]);
-
-  useEffect(() => {
-    if (!lobby) {
-      setHostMessages([]);
-    }
-  }, [lobby]);
 
   const emitWithAck = useCallback(async <T,>(event: string, payload: any): Promise<T> => {
     return new Promise((resolve, reject) => {
@@ -301,7 +284,6 @@ export const FriendLobbyProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
   const leaveLobby = useCallback(async (lobbyId: string) => {
     await emitWithAck('lobby:leave', { lobbyId });
-    setHostMessages(prev => prev.filter(message => message.lobbyId !== lobbyId));
     setLobby(null);
     await refreshLobbies();
   }, [emitWithAck, refreshLobbies]);
@@ -310,16 +292,20 @@ export const FriendLobbyProvider: React.FC<{ children: React.ReactNode }> = ({ c
     await emitWithAck('lobby:start', { lobbyId });
   }, [emitWithAck]);
 
-  const submitAttempt = useCallback(async (lobbyId: string, answer: string) => {
-    await emitWithAck('lobby:attempt', { lobbyId, answer });
-  }, [emitWithAck]);
+  const sendLobbyMessage = useCallback(async (content: string, kind: 'chat' | 'guess') => {
+    if (!lobby) {
+      throw new Error('No active lobby');
+    }
+    await emitWithAck('lobby:message', { lobbyId: lobby.id, content, kind });
+  }, [emitWithAck, lobby]);
 
   const sendFriendRequest = useCallback(async (targetUserId: string) => {
-    await fetchWithAuth('/friends/requests', {
+    const response = await fetchWithAuth('/friends/requests', {
       method: 'POST',
       body: JSON.stringify({ targetUserId }),
     });
     await refreshFriends();
+    return response;
   }, [fetchWithAuth, refreshFriends]);
 
   const acceptFriendRequest = useCallback(async (friendshipId: string) => {
@@ -340,13 +326,12 @@ export const FriendLobbyProvider: React.FC<{ children: React.ReactNode }> = ({ c
     friends,
     lobby,
     availableLobbies,
-    hostMessages,
     isConnected,
     createLobby,
     joinLobby,
     leaveLobby,
     startLobby,
-    submitAttempt,
+    sendLobbyMessage,
     refreshFriends,
     refreshLobbies,
     sendFriendRequest,
@@ -357,7 +342,6 @@ export const FriendLobbyProvider: React.FC<{ children: React.ReactNode }> = ({ c
     createLobby,
     friends,
     availableLobbies,
-    hostMessages,
     isConnected,
     joinLobby,
     leaveLobby,
@@ -366,7 +350,7 @@ export const FriendLobbyProvider: React.FC<{ children: React.ReactNode }> = ({ c
     refreshLobbies,
     removeFriend,
     startLobby,
-    submitAttempt,
+    sendLobbyMessage,
     sendFriendRequest,
   ]);
 

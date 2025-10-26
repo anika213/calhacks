@@ -75,16 +75,28 @@ export default function LoginScreen() {
   // If user is logged in, show profile view
 
   if (user) {
+    const displayName = (user.name && user.name.trim()) || (user.email?.split('@')[0] ?? 'Friend');
+    const initials = displayName
+      .split(/\s+/)
+      .filter(Boolean)
+      .map(word => word.charAt(0).toUpperCase())
+      .join('')
+      .slice(0, 2) || 'U';
+    const ageLabel = typeof user.age === 'number' && Number.isFinite(user.age)
+      ? `${user.age} years old`
+      : 'Not provided';
+    const languageLabel = user.preferredLanguage?.trim() || 'Not set';
+
     return (
       <SafeAreaView style={styles.container}>
         <ScrollView contentContainerStyle={styles.scrollContent}>
           <View style={styles.header}>
             <View style={styles.avatarContainer}>
               <Text style={styles.avatarText}>
-                {user.name.split(' ').map(word => word.charAt(0)).join('').toUpperCase().slice(0, 2)}
+                {initials}
               </Text>
             </View>
-            <Text style={styles.title}>Welcome, {user.name}!</Text>
+            <Text style={styles.title}>Welcome, {displayName}!</Text>
             <Text style={styles.subtitle}>Your therapy journey continues</Text>
           </View>
 
@@ -92,25 +104,25 @@ export default function LoginScreen() {
             <View style={styles.infoItem}>
               <IconSymbol name="envelope.fill" size={20} color="#6B8E6B" />
               <Text style={styles.infoLabel}>Username</Text>
-              <Text style={styles.infoValue}>{user.email}</Text>
+              <Text style={styles.infoValue}>{user.email ?? 'Unknown'}</Text>
             </View>
             
             <View style={styles.infoItem}>
               <IconSymbol name="calendar" size={20} color="#6B8E6B" />
               <Text style={styles.infoLabel}>Age</Text>
-              <Text style={styles.infoValue}>{user.age} years old</Text>
+              <Text style={styles.infoValue}>{ageLabel}</Text>
             </View>
             
             <View style={styles.infoItem}>
               <IconSymbol name="globe" size={20} color="#6B8E6B" />
               <Text style={styles.infoLabel}>Language</Text>
-              <Text style={styles.infoValue}>{user.preferredLanguage}</Text>
+              <Text style={styles.infoValue}>{languageLabel}</Text>
             </View>
           </View>
 
-          {/* Today's Progress Section */}
+          {/* Today&apos;s Progress Section */}
           <View style={styles.progressSection}>
-            <Text style={styles.progressTitle}>Today's Progress</Text>
+            <Text style={styles.progressTitle}>Today&apos;s Progress</Text>
             
             {loadingProgress ? (
               <View style={styles.loadingContainer}>
@@ -147,7 +159,7 @@ export default function LoginScreen() {
                 {/* Game Scores Summary */}
                 {dailyProgress.gameScores.length > 0 && (
                   <View style={styles.scoreSection}>
-                    <Text style={styles.scoreSectionTitle}>🎮 Today's Scores</Text>
+                    <Text style={styles.scoreSectionTitle}>🎮 Today&apos;s Scores</Text>
                     {dailyProgress.gameScores.map((score, index) => (
                       <View key={index} style={styles.scoreItem}>
                         <Text style={styles.scoreGameName}>{score.gameName}</Text>

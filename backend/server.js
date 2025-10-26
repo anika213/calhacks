@@ -10,6 +10,7 @@ const { MongoClient, GridFSBucket, ObjectId } = require("mongodb");
 require('dotenv').config();
 const mongoose = require("mongoose");
 const stream = require('stream');
+const { TextDecoder } = require('util');
 
 const axios= require("axios");
 const path = require('path');
@@ -535,7 +536,277 @@ const sanitizeUserSummary = user => {
   };
 };
 
-const toObjectId = value => (value instanceof ObjectId ? value : new ObjectId(value));
+const toObjectId = value => {
+  if (value instanceof ObjectId) {
+    return value;
+  }
+  if (ObjectId.isValid(value)) {
+    return new ObjectId(value);
+  }
+  throw new Error(`Invalid ObjectId value: ${value}`);
+};
+
+const sanitizeControlCharacters = value => (typeof value === 'string'
+  ? value.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '')
+  : value);
+
+const createLobbyMessage = ({
+  role,
+  authorId,
+  authorName,
+  content,
+  kind = 'chat',
+  createdAt = new Date(),
+}) => ({
+  id: new ObjectId().toString(),
+  role,
+  authorId: authorId ? toObjectId(authorId) : null,
+  authorName: authorName ?? null,
+  content,
+  kind,
+  createdAt,
+});
+
+const sanitizeLobbyMessage = message => ({
+  id: message.id ?? (message._id ? message._id.toString() : new ObjectId().toString()),
+  role: message.role,
+  authorId: message.authorId ? message.authorId.toString() : null,
+  authorName: message.authorName ?? null,
+  content: message.content,
+  kind: message.kind ?? 'chat',
+  createdAt: message.createdAt ? new Date(message.createdAt).getTime() : Date.now(),
+});
+
+const summariseLobbyHistory = (messages = [], limit = 8) => {
+  return messages.slice(-limit).map(entry => {
+    const name = entry.authorName
+      || (entry.role === 'host' ? (connectionPromptConfig.hostName || 'Trivia Host') : 'Player');
+    return `${name}: ${entry.content}`;
+  }).join('\n');
+};
+
+const generateLobbyHostChatReply = async (lobby, playerCount) => {
+  const history = summariseLobbyHistory(lobby.messages || []);
+  if (!history) {
+    return null;
+  }
+  const prompt = [
+    `You are ${connectionPromptConfig.hostName || 'Trivia Host'}, a warm trivia facilitator.`,
+    'Reply with a short (<=45 words) encouraging message that keeps the group engaged.',
+    'Avoid revealing any unanswered trivia solutions.',
+    '',
+    'Recent conversation:',
+    history,
+  ].join('\n');
+
+  const content = await callTriviaService([
+    { role: 'system', content: connectionPromptConfig.systemPrompt || 'You are a friendly trivia host.' },
+    {
+      role: 'user',
+      content: JSON.stringify({ type: 'context', gameMode: 'multiplayer', playerCount, intent: 'chat-reply' }),
+    },
+    { role: 'user', content: prompt },
+  ]);
+
+  if (!content) {
+    return null;
+  }
+
+  const cleaned = sanitizeControlCharacters(content).trim();
+  return cleaned || null;
+};
+
+const tryParseJSON = raw => {
+  if (typeof raw !== 'string') {
+    return null;
+  }
+  try {
+    return JSON.parse(raw);
+  } catch (error) {
+    const match = raw.match(/```(?:json)?\s*([\s\S]+?)```/i);
+    if (match) {
+      try {
+        return JSON.parse(match[1]);
+      } catch (innerError) {
+        console.error('Failed to parse fenced JSON from trivia response', innerError);
+      }
+    }
+    console.error('Failed to parse trivia response as JSON', error);
+    return null;
+  }
+};
+
+const extractTokensFromChunk = chunk => {
+  if (!chunk) {
+    return [];
+  }
+  const lines = chunk.split(/\r?\n/).filter(line => line.trim().length > 0);
+  const tokens = [];
+  lines.forEach(line => {
+    const trimmed = line.trim();
+    if (!trimmed.toLowerCase().startsWith('data:')) {
+      return;
+    }
+    const payload = trimmed.slice(5).trim();
+    if (!payload || payload === '[DONE]') {
+      return;
+    }
+    try {
+      const parsed = JSON.parse(payload);
+      const choice = parsed?.choices?.[0];
+      if (choice?.delta?.content !== undefined) {
+        tokens.push(String(choice.delta.content));
+        return;
+      }
+      if (choice?.message?.content !== undefined) {
+        tokens.push(String(choice.message.content));
+        return;
+      }
+      if (typeof choice?.content === 'string') {
+        tokens.push(choice.content);
+        return;
+      }
+      if (typeof parsed?.message?.content === 'string') {
+        tokens.push(parsed.message.content);
+        return;
+      }
+      if (typeof parsed?.content === 'string') {
+        tokens.push(parsed.content);
+      }
+    } catch (parseError) {
+      tokens.push(payload);
+    }
+  });
+  return tokens;
+};
+
+const collectStreamedContent = async (response, onToken) => {
+  if (!response?.body || typeof response.body.getReader !== 'function') {
+    const text = await response.text();
+    if (onToken) {
+      extractTokensFromChunk(text).forEach(token => onToken(token));
+    }
+    return text;
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder('utf-8');
+  let aggregated = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    const chunk = decoder.decode(value, { stream: true });
+    aggregated += chunk;
+    if (onToken) {
+      extractTokensFromChunk(chunk).forEach(token => onToken(token));
+    }
+  }
+
+  return aggregated;
+};
+
+const aggregateStreamContent = raw => {
+  if (!raw) {
+    return raw;
+  }
+  const lines = raw.split(/\r?\n/).filter(line => line.trim().length > 0);
+  let aggregated = '';
+  let lastJSONSnippet = null;
+
+  lines.forEach(line => {
+    const trimmed = line.trim();
+    if (!trimmed.toLowerCase().startsWith('data:')) {
+      return;
+    }
+    const payload = trimmed.slice(5).trimStart();
+    if (!payload || payload === '[DONE]') {
+      return;
+    }
+    try {
+      const parsed = JSON.parse(payload);
+      const choice = parsed?.choices?.[0];
+      if (choice?.delta?.content !== undefined) {
+        aggregated += String(choice.delta.content);
+        return;
+      }
+      if (choice?.message?.content !== undefined) {
+        aggregated += String(choice.message.content);
+        return;
+      }
+      if (typeof choice?.content === 'string') {
+        aggregated += choice.content;
+        return;
+      }
+      if (typeof parsed?.message?.content === 'string') {
+        aggregated += parsed.message.content;
+        return;
+      }
+      if (typeof parsed?.content === 'string') {
+        aggregated += parsed.content;
+        return;
+      }
+      lastJSONSnippet = parsed;
+    } catch (parseError) {
+      aggregated += payload;
+      lastJSONSnippet = payload;
+    }
+  });
+
+  if (!aggregated && lastJSONSnippet) {
+    try {
+      return JSON.stringify(lastJSONSnippet);
+    } catch (error) {
+      // ignore
+    }
+  }
+  return aggregated;
+};
+
+const escapeRegex = value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const resolveUserIdentifier = async identifier => {
+  if (!identifier || typeof identifier !== 'string') {
+    return null;
+  }
+
+  const trimmed = identifier.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  if (ObjectId.isValid(trimmed)) {
+    const objectId = new ObjectId(trimmed);
+    const user = await usersCollection.findOne({ _id: objectId });
+    if (user) {
+      return { user, objectId };
+    }
+  }
+
+  const emailCandidate = await usersCollection.findOne({
+    email: { $regex: new RegExp(`^${escapeRegex(trimmed)}$`, 'i') },
+  });
+  if (emailCandidate) {
+    return { user: emailCandidate, objectId: emailCandidate._id };
+  }
+
+  const nameMatches = await usersCollection
+    .find({ name: { $regex: new RegExp(`^${escapeRegex(trimmed)}$`, 'i') } })
+    .toArray();
+
+  if (nameMatches.length === 1) {
+    const match = nameMatches[0];
+    return { user: match, objectId: match._id };
+  }
+
+  if (nameMatches.length > 1) {
+    throw new Error('Multiple users share that name. Please use their email or ID.');
+  }
+
+  return null;
+};
 
 const fetchUsersByIds = async ids => {
   if (!ids.length) {
@@ -605,7 +876,7 @@ const emitFriendSnapshot = async userId => {
   if (!sockets || !sockets.size) {
     return;
   }
-  const snapshot = await buildFriendSnapshot(new ObjectId(userId));
+  const snapshot = await buildFriendSnapshot(toObjectId(userId));
   sockets.forEach(socketId => {
     io.to(socketId).emit('friend:update', snapshot);
   });
@@ -637,7 +908,12 @@ const sanitizeLobby = (lobby, viewerId) => {
       response: attempt.response,
       createdAt: attempt.createdAt,
       isCorrect: attempt.isCorrect,
+      elapsedMs: attempt.elapsedMs ?? null,
     })),
+    startedAt: question.startedAt || null,
+    solvedAt: question.solvedAt || null,
+    solverId: question.winnerId ? question.winnerId.toString() : null,
+    solveDurationMs: question.solveDurationMs ?? null,
   }));
 
   return {
@@ -649,6 +925,7 @@ const sanitizeLobby = (lobby, viewerId) => {
     currentTurnIndex: lobby.currentTurnIndex ?? 0,
     players,
     questions,
+    messages: (lobby.messages || []).map(sanitizeLobbyMessage),
     createdAt: lobby.createdAt,
     updatedAt: lobby.updatedAt,
   };
@@ -746,8 +1023,14 @@ const generateLobbyQuestions = async (players, questionCount) => {
     userProfile,
   });
 
+  const contextMessage = {
+    role: 'user',
+    content: JSON.stringify({ type: 'context', gameMode: 'multiplayer', playerCount: players.length }),
+  };
+
   const content = await callTriviaService([
     { role: 'system', content: connectionPromptConfig.systemPrompt || 'You are a friendly trivia host.' },
+    contextMessage,
     { role: 'user', content: userPrompt },
   ]);
 
@@ -785,7 +1068,25 @@ const generateLobbyQuestions = async (players, questionCount) => {
   }));
 };
 
-const evaluateLobbyAttempt = async (question, attempt, onToken) => {
+const evaluateLocally = (question, attempt) => {
+  const answer = (question?.answer ?? '').trim().toLowerCase();
+  const guess = (attempt ?? '').trim().toLowerCase();
+  const isCorrect = Boolean(answer) && answer === guess;
+  const defaultHint = Array.isArray(question?.hints) && question.hints.length
+    ? question.hints[0]
+    : 'Try re-reading the clue slowly and consider synonyms.';
+
+  return {
+    isCorrect,
+    reason: isCorrect ? 'Exact text match' : 'Answer does not match',
+    hostResponse: isCorrect
+      ? `Wonderful! "${question.answer}" is correct.`
+      : `Not quite. Hint: ${defaultHint}`,
+    hint: isCorrect ? undefined : defaultHint,
+  };
+};
+
+const evaluateLobbyAttempt = async (question, attempt, playerCount, onToken) => {
   const template = connectionPromptConfig.evaluationTemplate
     || 'Question: {{question}} | Correct answer: {{answer}} | Player answer: {{attempt}}. Return JSON {"isCorrect": boolean, "reason": string}';
 
@@ -795,8 +1096,14 @@ const evaluateLobbyAttempt = async (question, attempt, onToken) => {
     attempt,
   });
 
+  const contextMessage = {
+    role: 'user',
+    content: JSON.stringify({ type: 'context', gameMode: 'multiplayer', playerCount }),
+  };
+
   const content = await callTriviaService([
     { role: 'system', content: connectionPromptConfig.systemPrompt || 'You are a friendly trivia host.' },
+    contextMessage,
     { role: 'user', content: userPrompt },
   ], onToken);
 
@@ -850,6 +1157,7 @@ const createLobbyDocument = async (hostId, maxPlayers = DEFAULT_MAX_PLAYERS) => 
       profile: sanitizeUserSummary(hostUser),
     }],
     questions: [],
+    messages: [],
     currentQuestionIndex: 0,
     currentTurnIndex: 0,
     createdAt: now,
@@ -945,32 +1253,6 @@ const removePlayerFromLobby = async (lobbyId, userId) => {
   return updated.value;
 };
 
-const advanceTurn = (lobby, currentPlayerIndex) => {
-  const playerCount = lobby.players.length;
-  const question = lobby.questions[lobby.currentQuestionIndex];
-  const attemptedSet = new Set((question.attempts || []).map(attempt => attempt.userId.toString()));
-
-  let nextIndex = (currentPlayerIndex + 1) % playerCount;
-  for (let i = 0; i < playerCount; i += 1) {
-    const candidateIndex = (currentPlayerIndex + 1 + i) % playerCount;
-    const candidate = lobby.players[candidateIndex];
-    if (!attemptedSet.has(candidate.userId.toString())) {
-      nextIndex = candidateIndex;
-      break;
-    }
-  }
-  lobby.currentTurnIndex = nextIndex;
-};
-
-const prepareNextQuestion = (lobby, startingIndex = 0) => {
-  lobby.currentQuestionIndex += 1;
-  lobby.currentTurnIndex = startingIndex % lobby.players.length;
-  lobby.updatedAt = new Date();
-  if (lobby.currentQuestionIndex >= lobby.questions.length) {
-    lobby.status = LOBBY_STATUS_COMPLETED;
-  }
-};
-
 const startLobbySession = async lobbyId => {
   const lobbyObjectId = toObjectId(lobbyId);
   const lobby = await lobbiesCollection.findOne({ _id: lobbyObjectId });
@@ -998,7 +1280,36 @@ const startLobbySession = async lobbyId => {
   );
 
   const questionCount = Math.min(DEFAULT_FALLBACK_QUESTIONS.length, lobby.players.length + 1);
-  const questions = await generateLobbyQuestions(playerProfiles, questionCount);
+  const generatedQuestions = await generateLobbyQuestions(playerProfiles, questionCount);
+  const now = new Date();
+  const hostDisplayName = connectionPromptConfig.hostName || 'Trivia Host';
+
+  const questions = generatedQuestions.map((question, index) => ({
+    ...question,
+    attempts: question.attempts || [],
+    startedAt: index === 0 ? now : null,
+    solvedAt: null,
+    solveDurationMs: null,
+    winnerId: null,
+  }));
+
+  const welcomeMessage = createLobbyMessage({
+    role: 'host',
+    authorId: null,
+    authorName: hostDisplayName,
+    content: 'Welcome everyone! Let’s warm up those minds and enjoy some friendly trivia together.',
+    kind: 'chat',
+    createdAt: now,
+  });
+
+  const firstQuestionMessage = createLobbyMessage({
+    role: 'host',
+    authorId: null,
+    authorName: hostDisplayName,
+    content: `Round 1: ${questions[0].prompt}`,
+    kind: 'system',
+    createdAt: now,
+  });
 
   const updated = await lobbiesCollection.findOneAndUpdate(
     { _id: lobbyObjectId },
@@ -1006,18 +1317,25 @@ const startLobbySession = async lobbyId => {
       $set: {
         status: LOBBY_STATUS_IN_PROGRESS,
         questions,
+        messages: (lobby.messages || []).concat(welcomeMessage, firstQuestionMessage),
         currentQuestionIndex: 0,
         currentTurnIndex: 0,
-        updatedAt: new Date(),
+        updatedAt: now,
       },
     },
     { returnDocument: 'after' },
   );
 
+  const sanitizedWelcome = sanitizeLobbyMessage(welcomeMessage);
+  const sanitizedFirst = sanitizeLobbyMessage(firstQuestionMessage);
+  const lobbyRoomId = lobbyRoom(lobbyObjectId.toString());
+  io.to(lobbyRoomId).emit('lobby:message', { lobbyId: lobbyObjectId.toString(), message: sanitizedWelcome });
+  io.to(lobbyRoomId).emit('lobby:message', { lobbyId: lobbyObjectId.toString(), message: sanitizedFirst });
+
   return updated.value;
 };
 
-const handleLobbyAttempt = async (lobbyId, userId, attempt, onToken) => {
+const handleLobbyAttempt = async (lobbyId, userId, attempt) => {
   const lobbyObjectId = toObjectId(lobbyId);
   const lobby = await lobbiesCollection.findOne({ _id: lobbyObjectId });
   if (!lobby) {
@@ -1031,21 +1349,24 @@ const handleLobbyAttempt = async (lobbyId, userId, attempt, onToken) => {
   if (playerIndex === -1) {
     throw new Error('Player not part of lobby');
   }
-  if (playerIndex !== lobby.currentTurnIndex) {
-    throw new Error('Not your turn');
-  }
 
   const question = lobby.questions[lobby.currentQuestionIndex];
   if (!question) {
     throw new Error('No active question');
   }
 
-  const evaluation = await evaluateLobbyAttempt(question, attempt, onToken);
+  const evaluation = await evaluateLobbyAttempt(question, attempt, lobby.players.length);
+  const now = new Date();
+  if (!question.startedAt) {
+    question.startedAt = now;
+  }
+  const elapsedMs = question.startedAt ? now - new Date(question.startedAt) : 0;
   const attemptRecord = {
     userId,
     response: attempt,
-    createdAt: new Date(),
+    createdAt: now,
     isCorrect: evaluation.isCorrect,
+    elapsedMs,
   };
   question.attempts = question.attempts || [];
   question.attempts.push(attemptRecord);
@@ -1053,30 +1374,26 @@ const handleLobbyAttempt = async (lobbyId, userId, attempt, onToken) => {
   if (evaluation.isCorrect) {
     question.completed = true;
     question.winnerId = userId;
+    question.solvedAt = now;
+    question.solveDurationMs = elapsedMs;
     lobby.players[playerIndex].score = (lobby.players[playerIndex].score || 0) + 1;
-    lobby.updatedAt = new Date();
+    lobby.updatedAt = now;
 
     if (lobby.currentQuestionIndex + 1 < lobby.questions.length) {
-      prepareNextQuestion(lobby, playerIndex);
+      lobby.currentQuestionIndex += 1;
+      const nextQuestion = lobby.questions[lobby.currentQuestionIndex];
+      nextQuestion.startedAt = now;
+      nextQuestion.completed = false;
+      nextQuestion.winnerId = null;
+      nextQuestion.solvedAt = null;
+      nextQuestion.solveDurationMs = null;
     } else {
       lobby.status = LOBBY_STATUS_COMPLETED;
     }
   } else {
     question.completed = false;
     question.winnerId = null;
-    const attemptsByUsers = new Set(question.attempts.map(attemptItem => attemptItem.userId.toString()));
-    if (attemptsByUsers.size >= lobby.players.length) {
-      question.completed = true;
-      lobby.updatedAt = new Date();
-      if (lobby.currentQuestionIndex + 1 < lobby.questions.length) {
-        prepareNextQuestion(lobby);
-      } else {
-        lobby.status = LOBBY_STATUS_COMPLETED;
-      }
-    } else {
-      advanceTurn(lobby, playerIndex);
-      lobby.updatedAt = new Date();
-    }
+    lobby.updatedAt = now;
   }
 
   await lobbiesCollection.updateOne({ _id: lobbyObjectId }, {
@@ -1085,12 +1402,12 @@ const handleLobbyAttempt = async (lobbyId, userId, attempt, onToken) => {
       players: lobby.players,
       status: lobby.status,
       currentQuestionIndex: lobby.currentQuestionIndex,
-      currentTurnIndex: lobby.currentTurnIndex,
-      updatedAt: lobby.updatedAt || new Date(),
+      currentTurnIndex: lobby.currentTurnIndex ?? 0,
+      updatedAt: lobby.updatedAt || now,
     },
   });
 
-  return { lobby, evaluation };
+  return { lobby, evaluation, attemptRecord, elapsedMs };
 };
 
 const serializePerGameMetrics = perGame => {
@@ -1396,14 +1713,29 @@ app.post('/api/friends/requests', authenticateToken, async (req, res) => {
       return res.status(400).json({ success: false, message: 'targetUserId is required' });
     }
 
-    if (userId.toString() === targetUserId) {
-      return res.status(400).json({ success: false, message: 'Cannot add yourself as a friend' });
+    const targetIdentifier = typeof targetUserId === 'string' ? targetUserId.trim() : '';
+    if (!targetIdentifier) {
+      return res.status(400).json({ success: false, message: 'Friend identifier cannot be empty' });
     }
 
-    const targetObjectId = toObjectId(targetUserId);
-    const targetUser = await usersCollection.findOne({ _id: targetObjectId });
-    if (!targetUser) {
+    let resolution;
+    try {
+      resolution = await resolveUserIdentifier(targetIdentifier);
+    } catch (lookupError) {
+      return res.status(400).json({
+        success: false,
+        message: lookupError.message || 'Invalid friend identifier',
+      });
+    }
+
+    if (!resolution) {
       return res.status(404).json({ success: false, message: 'Target user not found' });
+    }
+
+    const targetObjectId = resolution.objectId;
+
+    if (targetObjectId.equals(userId)) {
+      return res.status(400).json({ success: false, message: 'Cannot add yourself as a friend' });
     }
 
     const existing = await friendshipsCollection.findOne({
@@ -2392,38 +2724,186 @@ io.on('connection', socket => {
     }
   });
 
-  socket.on('lobby:attempt', async ({ lobbyId, answer }, callback) => {
+  socket.on('lobby:message', async ({ lobbyId, content, kind = 'chat' }, callback) => {
     try {
       if (!ObjectId.isValid(lobbyId)) {
         throw new Error('Invalid lobby id');
       }
-      const messageId = `host-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-      io.to(lobbyRoom(lobbyId)).emit('lobby:hostMessage:start', { lobbyId, messageId, userId });
+      const trimmed = (content || '').trim();
+      if (!trimmed) {
+        throw new Error('Message cannot be empty');
+      }
 
-      const { lobby, evaluation } = await handleLobbyAttempt(
-        lobbyId,
-        toObjectId(userId),
-        answer,
-        token => io.to(lobbyRoom(lobbyId)).emit('lobby:hostMessage:token', { lobbyId, messageId, token }),
-      );
+      const lobbyObjectId = new ObjectId(lobbyId);
+      const lobby = await lobbiesCollection.findOne({ _id: lobbyObjectId });
+      if (!lobby) {
+        throw new Error('Lobby not found');
+      }
 
-      await emitLobbyUpdate(lobbyId);
-      io.to(lobbyRoom(lobbyId)).emit('lobby:hostMessage:end', {
-        lobbyId,
-        messageId,
-        message: evaluation.hostResponse,
-        isCorrect: evaluation.isCorrect,
-        hint: evaluation.hint,
-        userId,
+      const playerEntry = (lobby.players || []).find(player => player.userId.equals(toObjectId(userId)));
+      if (!playerEntry) {
+        throw new Error('Player not part of lobby');
+      }
+
+      if (kind === 'guess' && lobby.status !== LOBBY_STATUS_IN_PROGRESS) {
+        throw new Error('Lobby not in progress');
+      }
+
+      const displayName = playerEntry.profile?.name
+        || playerEntry.profile?.email
+        || `Player ${playerEntry.order + 1}`;
+
+      const userMessageRecord = createLobbyMessage({
+        role: 'user',
+        authorId: toObjectId(userId),
+        authorName: displayName,
+        content: trimmed,
+        kind,
       });
 
-      if (typeof callback === 'function') {
-        callback({ success: true, evaluation });
+      lobby.messages = lobby.messages || [];
+      lobby.messages.push(userMessageRecord);
+      io.to(lobbyRoom(lobbyId)).emit('lobby:message', {
+        lobbyId,
+        message: sanitizeLobbyMessage(userMessageRecord),
+      });
+
+      if (kind === 'guess') {
+        const { lobby: updatedLobby, evaluation, attemptRecord } = await handleLobbyAttempt(
+          lobbyId,
+          toObjectId(userId),
+          trimmed,
+        );
+
+        // Replace lobby reference with the updated one so subsequent logic operates on the new state.
+        lobby.status = updatedLobby.status;
+        lobby.currentQuestionIndex = updatedLobby.currentQuestionIndex;
+        lobby.currentTurnIndex = updatedLobby.currentTurnIndex;
+        lobby.questions = updatedLobby.questions;
+        lobby.players = updatedLobby.players;
+
+        const hostDisplayName = connectionPromptConfig.hostName || 'Trivia Host';
+        const hostMessageRecord = createLobbyMessage({
+          role: 'host',
+          authorId: null,
+          authorName: hostDisplayName,
+          content: evaluation.hostResponse || 'Thanks for that try! Give it another shot.',
+          kind: 'system',
+        });
+
+        const messageBatch = [hostMessageRecord];
+
+        if (evaluation.isCorrect && updatedLobby.status !== LOBBY_STATUS_COMPLETED) {
+          const nextQuestion = updatedLobby.questions[updatedLobby.currentQuestionIndex];
+          if (nextQuestion) {
+            const roundNumber = updatedLobby.currentQuestionIndex + 1;
+            const nextPromptMessage = createLobbyMessage({
+              role: 'host',
+              authorId: null,
+              authorName: hostDisplayName,
+              content: `Round ${roundNumber}: ${nextQuestion.prompt}`,
+              kind: 'system',
+            });
+            messageBatch.push(nextPromptMessage);
+            lobby.messages.push(nextPromptMessage);
+          }
+        } else if (evaluation.isCorrect && updatedLobby.status === LOBBY_STATUS_COMPLETED) {
+          const closingMessage = createLobbyMessage({
+            role: 'host',
+            authorId: null,
+            authorName: hostDisplayName,
+            content: 'That wraps up the game! Thanks for playing together—great teamwork!',
+            kind: 'system',
+          });
+          messageBatch.push(closingMessage);
+          lobby.messages.push(closingMessage);
+        }
+
+        lobby.messages.push(hostMessageRecord);
+        // Ensure the latest question record includes the final attempt metadata (elapsed time).
+        if (attemptRecord && lobby.questions?.[updatedLobby.currentQuestionIndex]) {
+          const questionRecord = lobby.questions[updatedLobby.currentQuestionIndex];
+          if (questionRecord && Array.isArray(questionRecord.attempts)) {
+            const existingIndex = questionRecord.attempts.findIndex(entry =>
+              entry.userId === attemptRecord.userId.toString() &&
+              entry.createdAt?.toString() === attemptRecord.createdAt?.toString());
+            const serializedAttempt = {
+              userId: attemptRecord.userId.toString(),
+              response: attemptRecord.response,
+              createdAt: attemptRecord.createdAt,
+              isCorrect: attemptRecord.isCorrect,
+              elapsedMs: attemptRecord.elapsedMs ?? null,
+            };
+            if (existingIndex >= 0) {
+              questionRecord.attempts[existingIndex] = serializedAttempt;
+            } else {
+              questionRecord.attempts.push(serializedAttempt);
+            }
+            questionRecord.startedAt = questionRecord.startedAt ?? attemptRecord.createdAt?.getTime?.();
+            if (evaluation.isCorrect) {
+              questionRecord.solvedAt = attemptRecord.createdAt?.getTime?.() ?? Date.now();
+              questionRecord.solveDurationMs = attemptRecord.elapsedMs ?? questionRecord.solveDurationMs ?? null;
+            }
+          }
+        }
+
+        messageBatch.forEach(message =>
+          io.to(lobbyRoom(lobbyId)).emit('lobby:message', {
+            lobbyId,
+            message: sanitizeLobbyMessage(message),
+          }));
+
+        await lobbiesCollection.updateOne({ _id: lobbyObjectId }, {
+          $set: {
+            messages: lobby.messages,
+            questions: lobby.questions,
+            currentQuestionIndex: lobby.currentQuestionIndex,
+            currentTurnIndex: lobby.currentTurnIndex,
+            status: lobby.status,
+            players: lobby.players,
+            updatedAt: new Date(),
+          },
+        });
+
+        await emitLobbyUpdate(lobbyId);
+
+        if (typeof callback === 'function') {
+          callback({ success: true, evaluation });
+        }
+      } else {
+        const reply = await generateLobbyHostChatReply(lobby, lobby.players.length);
+        if (reply) {
+          const hostMessageRecord = createLobbyMessage({
+            role: 'host',
+            authorId: null,
+            authorName: connectionPromptConfig.hostName || 'Trivia Host',
+            content: reply,
+            kind: 'chat',
+          });
+          lobby.messages.push(hostMessageRecord);
+          io.to(lobbyRoom(lobbyId)).emit('lobby:message', {
+            lobbyId,
+            message: sanitizeLobbyMessage(hostMessageRecord),
+          });
+        }
+
+        await lobbiesCollection.updateOne({ _id: lobbyObjectId }, {
+          $set: {
+            messages: lobby.messages,
+            updatedAt: new Date(),
+          },
+        });
+
+        await emitLobbyUpdate(lobbyId);
+
+        if (typeof callback === 'function') {
+          callback({ success: true });
+        }
       }
     } catch (error) {
-      console.error('Socket lobby:attempt error', error);
+      console.error('Socket lobby:message error', error);
       if (typeof callback === 'function') {
-        callback({ success: false, message: error.message || 'Failed to process attempt' });
+        callback({ success: false, message: error.message || 'Failed to send message' });
       }
     }
   });

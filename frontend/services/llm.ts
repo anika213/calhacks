@@ -69,11 +69,18 @@ const replacePlaceholders = (template: string, values: Record<string, string>): 
   return output;
 };
 
-const createHostMessage = (content: string): ConnectionMessage => ({
+const createHostMessage = (
+  content: string,
+  overrides?: Partial<ConnectionMessage>,
+): ConnectionMessage => ({
   id: `host-${Date.now()}-${Math.random().toString(36).slice(2)}`,
   role: 'host',
+  authorId: 'host',
+  authorName: DEFAULT_HOST_NAME,
+  kind: overrides?.kind ?? 'chat',
   content,
   createdAt: Date.now(),
+  ...overrides,
 });
 
 const sanitizeControlCharacters = (value: string): string =>
@@ -310,10 +317,16 @@ const toConnectionQuestion = (item: { prompt: string; answer: string; hints?: st
   hints: item.hints,
 });
 
+interface TriviaContextOptions {
+  mode?: 'solo' | 'multiplayer';
+  playerCount?: number;
+  onToken?: (token: string) => void;
+}
+
 const requestTriviaQuestions = async (
   profileSummary: string,
   count: number,
-  onToken?: (token: string) => void,
+  options?: TriviaContextOptions,
 ): Promise<ConnectionQuestion[] | null> => {
   const template = promptConfig.questionTemplate
     || 'Create {{questionCount}} trivia questions for the player described here: {{userProfile}}';
@@ -323,10 +336,18 @@ const requestTriviaQuestions = async (
     questionCount: String(count),
   });
 
+  const mode = options?.mode ?? 'solo';
+  const playerCount = options?.playerCount ?? (mode === 'solo' ? 1 : count);
+  const contextMessage: TriviaAPIMessage = {
+    role: 'user',
+    content: JSON.stringify({ type: 'context', gameMode: mode, playerCount }),
+  };
+
   const content = await callTriviaAPI([
     { role: 'system', content: DEFAULT_SYSTEM_PROMPT },
+    contextMessage,
     { role: 'user', content: userPrompt },
-  ], onToken);
+  ], options?.onToken);
 
   if (!content) {
     return null;
@@ -344,7 +365,7 @@ const requestTriviaQuestions = async (
 const requestTriviaEvaluation = async (
   question: ConnectionQuestion,
   attempt: string,
-  onToken?: (token: string) => void,
+  options?: TriviaContextOptions,
 ): Promise<TriviaEvaluation | null> => {
   const template = promptConfig.evaluationTemplate
     || 'Question: {{question}} | Correct answer: {{answer}} | Player answer: {{attempt}}. Return JSON {"isCorrect": boolean, "reason": string}';
@@ -355,10 +376,18 @@ const requestTriviaEvaluation = async (
     attempt,
   });
 
+  const mode = options?.mode ?? 'solo';
+  const playerCount = options?.playerCount ?? (mode === 'solo' ? 1 : 2);
+  const contextMessage: TriviaAPIMessage = {
+    role: 'user',
+    content: JSON.stringify({ type: 'context', gameMode: mode, playerCount }),
+  };
+
   const content = await callTriviaAPI([
     { role: 'system', content: DEFAULT_SYSTEM_PROMPT },
+    contextMessage,
     { role: 'user', content: userPrompt },
-  ], onToken);
+  ], options?.onToken);
 
   if (!content) {
     return null;
@@ -411,11 +440,11 @@ export interface StartSessionPayload {
 export const startConnectionSession = async (
   profile?: ConnectionUserProfile,
   roundCount: number = DEFAULT_ROUND_COUNT,
-  onToken?: (token: string) => void,
+  options?: TriviaContextOptions,
 ): Promise<StartSessionPayload> => {
   const profileSummary = buildUserProfileSummary(profile);
   const count = Math.max(1, Math.min(roundCount, DEFAULT_FALLBACK_QUESTIONS.length || DEFAULT_ROUND_COUNT));
-  const questions = await requestTriviaQuestions(profileSummary, count, onToken) ?? fallbackQuestions(count);
+  const questions = await requestTriviaQuestions(profileSummary, count, options) ?? fallbackQuestions(count);
 
   const greeting = `Hello! I'm ${DEFAULT_HOST_NAME}. I picked ${questions.length} trivia questions just for you. Let's see how many you can ace!`;
 
@@ -428,55 +457,87 @@ export const startConnectionSession = async (
 export interface AttemptResponse {
   hostMessage: ConnectionMessage;
   isCorrect: boolean;
-  provideAnswer?: boolean;
   evaluationReason?: string;
+  hint?: string;
 }
 
 export const submitConnectionAttempt = async (
   question: ConnectionQuestion,
   attempt: string,
-  attemptsUsed: number,
-  maxAttempts: number,
-  onToken?: (token: string) => void,
+  options?: TriviaContextOptions,
 ): Promise<AttemptResponse> => {
-  const evaluation = await requestTriviaEvaluation(question, attempt, onToken) ?? evaluateLocally(question, attempt);
-
-  if (evaluation.isCorrect) {
-    return {
-      isCorrect: true,
-      evaluationReason: evaluation.reason,
-      hostMessage: createHostMessage(
-        evaluation.hostResponse || "Correct! Let's jump to the next question.",
-      ),
-    };
-  }
-
-  const attemptsRemaining = maxAttempts - attemptsUsed - 1;
-
-  if (attemptsRemaining <= 0) {
-    return {
-      isCorrect: false,
-      provideAnswer: true,
-      evaluationReason: evaluation.reason,
-      hostMessage: createHostMessage(
-        evaluation.hostResponse
-          || `Close one! The correct answer was "${question.answer}". Let's move to the next challenge.`,
-      ),
-    };
-  }
-
-  const hint = evaluation.hint
-    || question.hints?.[Math.min(attemptsUsed, (question.hints?.length || 1) - 1)]
-    || `You have ${attemptsRemaining} attempt(s) left. Give it another shot!`;
-
-  const responseText = evaluation.hostResponse ?? hint;
+  const evaluation = await requestTriviaEvaluation(question, attempt, options) ?? evaluateLocally(question, attempt);
+  const hostMessage = createHostMessage(
+    evaluation.hostResponse
+      || (evaluation.isCorrect
+        ? "Correct! Let's jump to the next question."
+        : `Interesting thought. Hint: ${evaluation.hint || 'Try a different angle!'}`),
+  );
 
   return {
-    isCorrect: false,
+    isCorrect: evaluation.isCorrect,
     evaluationReason: evaluation.reason,
-    hostMessage: createHostMessage(responseText),
+    hint: evaluation.hint,
+    hostMessage,
   };
 };
 
 export const connectionHostName = DEFAULT_HOST_NAME;
 export const connectionDefaultRoundCount = DEFAULT_ROUND_COUNT;
+
+const summariseChatHistory = (history: ConnectionMessage[]): string => {
+  return history.map(message => {
+    const speaker = message.authorName ?? (message.role === 'host' ? DEFAULT_HOST_NAME : 'Player');
+    return `${speaker}: ${message.content}`;
+  }).join('\n');
+};
+
+export const requestHostChatReply = async (
+  history: ConnectionMessage[],
+  options?: TriviaContextOptions,
+): Promise<ConnectionMessage | null> => {
+  if (!history.length) {
+    return null;
+  }
+
+  const conversationSnippet = summariseChatHistory(history.slice(-8));
+  const mode = options?.mode ?? 'solo';
+  const playerCount = options?.playerCount ?? (mode === 'solo' ? 1 : 2);
+
+  const promptLines = [
+    `You are ${DEFAULT_HOST_NAME}, a warm and encouraging trivia host assisting older adults.`,
+    'Continue the group chat with a brief (<= 45 words) supportive message that keeps the game engaging.',
+    'Do not reveal unanswered trivia solutions. Reference the conversation naturally and invite further participation.',
+    '',
+    'Conversation so far:',
+    conversationSnippet,
+  ];
+  const chatPrompt = promptLines.join('\n');
+
+  const contextMessage: TriviaAPIMessage = {
+    role: 'user',
+    content: JSON.stringify({
+      type: 'context',
+      gameMode: mode,
+      playerCount,
+      intent: 'chat-reply',
+    }),
+  };
+
+  const content = await callTriviaAPI([
+    { role: 'system', content: DEFAULT_SYSTEM_PROMPT },
+    contextMessage,
+    { role: 'user', content: chatPrompt },
+  ], options?.onToken);
+
+  if (!content) {
+    return null;
+  }
+
+  const cleaned = content.trim();
+  if (!cleaned) {
+    return null;
+  }
+
+  return createHostMessage(cleaned, { kind: 'chat' });
+};
