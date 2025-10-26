@@ -538,17 +538,17 @@ const styles = StyleSheet.create({
   infoValue: {
     fontSize: 18,
     fontFamily: 'System',
-    color: '#7A8B7A',
+    color: '#167816ff',
     flex: 1,
     fontWeight: '400',
     letterSpacing: 0.2,
   },
   logoutButton: {
-    backgroundColor: '#FF6B6B',
+    backgroundColor: '#6B8E6B',
     paddingVertical: 20,
     borderRadius: 16,
     alignItems: 'center',
-    shadowColor: '#FFB8B8',
+    shadowColor: '#455845ff',
     shadowOffset: {
       width: 0,
       height: 4,

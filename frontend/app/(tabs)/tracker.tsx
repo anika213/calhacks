@@ -1,9 +1,9 @@
-import React, { useState, useEffect,useCallback } from 'react';
-import { 
-  View, 
-  Text, 
-  StyleSheet, 
-  ScrollView, 
+import React, { useState, useEffect, useCallback } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
   Dimensions
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -49,11 +49,11 @@ export default function TrackerScreen() {
       }
     }, [user, token])
   );
-  
+
 
   const fetchUserAccuracies = async () => {
     if (!token) return;
-    
+
     setLoading(true);
     try {
       const response = await fetch('http://localhost:8000/api/auth/me', {
@@ -92,7 +92,7 @@ export default function TrackerScreen() {
 
     // Combine all data
     const allData = [...accuracyData, ...mentalHealthEntries];
-    
+
     if (allData.length === 0) return null;
 
     const totalSessions = allData.length;
@@ -124,20 +124,20 @@ export default function TrackerScreen() {
 
     // Combine all data
     const allData = [...accuracyData, ...mentalHealthEntries];
-    
+
     if (allData.length === 0) return null;
-  
+
     const cognitiveData = allData
       .filter(item => item.gameType === 'cognitive')
       .slice(-10);
     const mentalHealthChartData = allData
       .filter(item => item.gameType === 'mental_health')
       .slice(-10);
-  
+
     const chartHeight = 160;
     const chartWidth = width - 100;
     const margin = { top: 20, right: 20, bottom: 40, left: 45 };
-  
+
     const renderScatter = (data: AccuracyData[], title: string, color: string) => {
       if (data.length === 0) {
         return (
@@ -146,12 +146,12 @@ export default function TrackerScreen() {
           </View>
         );
       }
-  
+
       const accuracies = data.map(item => item.accuracy);
       const maxAccuracy = Math.max(...accuracies);
       const minAccuracy = Math.min(...accuracies);
       const range = maxAccuracy - minAccuracy || 1;
-  
+
       return (
         <View style={{ marginBottom: 30 }}>
           <Text
@@ -165,21 +165,27 @@ export default function TrackerScreen() {
           >
             {title}
           </Text>
-  
+
           <View
             style={{
               height: chartHeight + margin.top + margin.bottom,
-              width: chartWidth + margin.left + margin.right,
+              width: width * 0.85, // responsive to screen width
               alignSelf: 'center',
               position: 'relative',
               backgroundColor: '#FAFAF9',
-              borderRadius: 10,
+              borderRadius: 16,
               borderWidth: 1,
               borderColor: '#E8EDE8',
-              paddingLeft: margin.left,
-              paddingBottom: margin.bottom,
-              paddingTop: margin.top,
-              paddingRight: margin.right,
+              paddingLeft: margin.left + 10,
+              paddingRight: margin.right + 10,
+              paddingTop: margin.top + 10,
+              paddingBottom: margin.bottom + 10,
+              overflow: 'hidden', // <-- this stops scatter points from overflowing
+              shadowColor: '#B8C5B8',
+              shadowOffset: { width: 0, height: 3 },
+              shadowOpacity: 0.1,
+              shadowRadius: 6,
+              elevation: 2,
             }}
           >
             {/* Y-axis line */}
@@ -193,7 +199,7 @@ export default function TrackerScreen() {
                 backgroundColor: '#D1D6D1',
               }}
             />
-  
+
             {/* X-axis line */}
             <View
               style={{
@@ -205,7 +211,7 @@ export default function TrackerScreen() {
                 backgroundColor: '#D1D6D1',
               }}
             />
-  
+
             {/* Scatter points */}
             {data.map((item, index) => {
               const x =
@@ -214,8 +220,8 @@ export default function TrackerScreen() {
               const y =
                 margin.top +
                 ((maxAccuracy - item.accuracy) / range) *
-                  (chartHeight - margin.top);
-  
+                (chartHeight - margin.top);
+
               return (
                 <View
                   key={index}
@@ -231,7 +237,7 @@ export default function TrackerScreen() {
                 />
               );
             })}
-  
+
             {/* Y-axis labels */}
             {[0, 0.25, 0.5, 0.75, 1].map((t, i) => {
               const value = maxAccuracy - t * range;
@@ -251,7 +257,7 @@ export default function TrackerScreen() {
                 </Text>
               );
             })}
-  
+
             {/* X-axis labels */}
             {data.map((item, index) => {
               const x =
@@ -277,7 +283,7 @@ export default function TrackerScreen() {
               );
             })}
           </View>
-  
+
           <View style={{ marginTop: 6, alignItems: 'center' }}>
             <Text style={{ fontSize: 12, color: '#5A6B5A', fontWeight: '500' }}>
               Date →
@@ -286,7 +292,7 @@ export default function TrackerScreen() {
         </View>
       );
     };
-  
+
     return (
       <View style={styles.chartContainer}>
         <Text style={styles.chartTitle}>Your Accuracy Progress</Text>
@@ -295,8 +301,8 @@ export default function TrackerScreen() {
       </View>
     );
   };
-  
-      
+
+
 
   return (
     <SafeAreaView style={styles.container}>
@@ -377,8 +383,8 @@ export default function TrackerScreen() {
                     <View style={styles.gameInfo}>
                       <Text style={styles.gameName}>{item.gameName}</Text>
                       <Text style={styles.gameDate}>
-                        {new Date(item.date).toLocaleDateString('en-US', { 
-                          month: 'short', 
+                        {new Date(item.date).toLocaleDateString('en-US', {
+                          month: 'short',
                           day: 'numeric',
                           hour: '2-digit',
                           minute: '2-digit'
@@ -388,7 +394,7 @@ export default function TrackerScreen() {
                     <View style={styles.gameScore}>
                       <Text style={styles.scoreValue}>{item.accuracy}%</Text>
                       <View style={[
-                        styles.gameTypeBadge, 
+                        styles.gameTypeBadge,
                         { backgroundColor: item.gameType === 'cognitive' ? '#6B8E6B' : '#8B6B8B' }
                       ]}>
                         <Text style={styles.gameTypeText}>

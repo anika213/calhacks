@@ -40,9 +40,9 @@ export default function HomeScreen() {
     router.push('/(tabs)/game');
   };
 
-  const handleChatPress = () => {
-    // Haptics.selectionAsync();
-    // router.push('/(tabs)/chat');
+  const handleSignInPress = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    router.push('/(tabs)/login');
   };
 
   return (
@@ -78,14 +78,14 @@ export default function HomeScreen() {
             <Text style={styles.primaryButtonText}>Start Daily Check-In</Text>
           </TouchableOpacity>
 
-          {/* Secondary Action: Chat */}
+          {/* Secondary Action: Sign In */}
           <TouchableOpacity
-            style={styles.chatButton}
-            onPress={handleChatPress}
+            style={styles.signInButton}
+            onPress={handleSignInPress}
             activeOpacity={0.85}
           >
-            <IconSymbol name="bubble.left.and.bubble.right.fill" size={20} color="#6B8E6B" />
-            <Text style={styles.chatButtonText}>Chat with Me</Text>
+            <IconSymbol name="person.fill" size={20} color="#6B8E6B" />
+            <Text style={styles.signInButtonText}>Sign In</Text>
           </TouchableOpacity>
         </ScrollView>
       </SafeAreaView>
@@ -155,7 +155,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginLeft: 8,
   },
-  chatButton: {
+  signInButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -169,7 +169,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#D6E0D6',
   },
-  chatButtonText: {
+  signInButtonText: {
     color: '#6B8E6B',
     fontSize: 17,
     fontWeight: '600',

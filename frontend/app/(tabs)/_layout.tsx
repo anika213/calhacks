@@ -40,14 +40,14 @@ export default function TabLayout() {
         name="tracker"
         options={{
           title: 'Tracker',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="chart.bar.fill" color={color} />,
+          tabBarIcon: ({ color }) => <IconSymbol size={28} name="chart.bar" color={color} />,
         }}
       />
       <Tabs.Screen
         name="game"
         options={{
           title: 'Game',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="gamecontroller.fill" color={color} />,
+          tabBarIcon: ({ color }) => <IconSymbol size={28} name="gamecontroller" color={color} />,
         }}
       />
 
