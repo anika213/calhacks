@@ -62,7 +62,7 @@ export default function ProfileScreen() {
     
     try {
       // TODO: Replace with actual API call
-      const response = await fetch('http://192.168.23.164:8000/api/users/profile', {
+      const response = await fetch('http://10.0.30.58:8000/api/users/profile', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

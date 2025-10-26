@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { ENV } from '@/config/env';
 
 interface User {
   id: string;
@@ -33,7 +34,7 @@ interface AuthProviderProps {
   children: ReactNode;
 }
 
-const API_BASE_URL = 'http://192.168.23.164:8000/api';
+const API_BASE_URL = 'http://10.0.30.58:8000/api';
 
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
@@ -50,9 +51,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       const storedToken = await AsyncStorage.getItem('authToken');
       if (storedToken) {
         setToken(storedToken);
-        
+
         // Verify token with backend
-        const response = await fetch(`${API_BASE_URL}/auth/me`, {
+        const response = await fetch(`${ENV.API_BASE_URL}/auth/me`, {
           headers: {
             'Authorization': `Bearer ${storedToken}`,
             'Content-Type': 'application/json',
@@ -80,8 +81,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const login = async (email: string, password: string): Promise<boolean> => {
     try {
       setIsLoading(true);
-      
-      const response = await fetch(`${API_BASE_URL}/auth/login`, {
+
+      const response = await fetch(`${ENV.API_BASE_URL}/auth/login`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -108,16 +109,16 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   };
 
   const register = async (
-    email: string, 
-    password: string, 
-    name: string, 
-    age: number, 
+    email: string,
+    password: string,
+    name: string,
+    age: number,
     preferredLanguage: string = 'English'
   ): Promise<boolean> => {
     try {
       setIsLoading(true);
-      
-      const response = await fetch(`${API_BASE_URL}/auth/register`, {
+
+      const response = await fetch(`${ENV.API_BASE_URL}/auth/register`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

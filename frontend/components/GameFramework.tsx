@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Alert } from 'react-native';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { useAuth } from '@/contexts/AuthContext';
+import voiceService from '@/services/voiceService';
+import { ENV } from '@/config/env';
 
 interface GameFrameworkProps {
   title: string;
@@ -11,6 +13,7 @@ interface GameFrameworkProps {
   simulate?: boolean;
   onComplete?: (score: number) => void;
   gameType?: 'cognitive' | 'mental_health';
+  voiceInstructions?: string; // Optional custom voice instructions
 }
 
 export default function GameFramework({
@@ -20,14 +23,45 @@ export default function GameFramework({
   questions = [],
   simulate = true,
   onComplete,
-  gameType = 'cognitive'
+  gameType = 'cognitive',
+  voiceInstructions
 }: GameFrameworkProps) {
   const { user, token } = useAuth();
   const [score, setScore] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [voiceEnabled, setVoiceEnabled] = useState(true);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+
+  // Voice feedback functions
+  const speakInstructions = async () => {
+    if (!voiceEnabled) return;
+
+    setIsSpeaking(true);
+    const instructions = voiceInstructions ||
+      `Welcome to ${title}. ${description}. Tap the start button when you're ready to begin.`;
+
+    await voiceService.speakGameInstructions(instructions);
+    setIsSpeaking(false);
+  };
+
+  const speakScore = async (currentScore: number) => {
+    if (!voiceEnabled) return;
+
+    const feedback = currentScore >= 100
+      ? `Congratulations! You completed the game with a score of ${currentScore}. Great job!`
+      : `Your current score is ${currentScore}.`;
+
+    await voiceService.speakFeedback(feedback);
+  };
+
+  const toggleVoice = async () => {
+    if (voiceEnabled) {
+      await voiceService.stop();
+    }
+    setVoiceEnabled(!voiceEnabled);
+  };
 
   const storeGameScore = async (finalScore: number) => {
-    alert('Storing game score:' + finalScore);
     console.log('Storing game score:', finalScore);
     if (!user || !token) {
       console.log('User not authenticated, skipping score storage');
@@ -35,6 +69,7 @@ export default function GameFramework({
     }
 
     try {
+      const response = await fetch(`${ENV.API_BASE_URL}/games/score`, {
       const response = await fetch('http://192.168.23.164:8000/api/games/score', {
         method: 'POST',
         headers: {
@@ -58,6 +93,14 @@ export default function GameFramework({
     }
   };
 
+  // Speak instructions when component mounts
+  useEffect(() => {
+    speakInstructions();
+    return () => {
+      voiceService.stop();
+    };
+  }, []);
+
   useEffect(() => {
     let interval: ReturnType<typeof setTimeout>;
     if (simulate && isPlaying) {
@@ -69,6 +112,8 @@ export default function GameFramework({
             setIsPlaying(false);
             // Store the score in the database
             storeGameScore(newScore);
+            // Speak completion feedback
+            speakScore(newScore);
             Alert.alert('Game Complete!', `You scored ${newScore}!`, [
               { text: 'OK', onPress: () => onComplete?.(newScore) }
             ]);
@@ -82,6 +127,31 @@ export default function GameFramework({
 
   return (
     <View style={[styles.container, { borderColor: color }]}>
+      {/* Voice Controls */}
+      <View style={styles.voiceControls}>
+        <TouchableOpacity
+          style={styles.voiceButton}
+          onPress={toggleVoice}
+        >
+          <IconSymbol
+            name={voiceEnabled ? "speaker.wave.2.fill" : "speaker.slash.fill"}
+            size={24}
+            color={voiceEnabled ? color : "#999"}
+          />
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.voiceButton}
+          onPress={speakInstructions}
+          disabled={isSpeaking || !voiceEnabled}
+        >
+          <IconSymbol
+            name="arrow.counterclockwise"
+            size={24}
+            color={voiceEnabled ? color : "#999"}
+          />
+        </TouchableOpacity>
+      </View>
+
       <Text style={[styles.title, { color }]}>{title}</Text>
       <Text style={styles.description}>{description}</Text>
 
@@ -123,6 +193,17 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 4 },
     shadowRadius: 10,
     elevation: 2,
+  },
+  voiceControls: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 12,
+    marginBottom: 12,
+  },
+  voiceButton: {
+    padding: 8,
+    borderRadius: 8,
+    backgroundColor: '#F0F4F0',
   },
   title: {
     fontSize: 28,
