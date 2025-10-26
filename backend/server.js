@@ -2791,7 +2791,9 @@ io.on('connection', socket => {
           kind: 'system',
         });
 
-        const messageBatch = [hostMessageRecord];
+        const messageBatch = [];
+        lobby.messages.push(hostMessageRecord);
+        messageBatch.push(hostMessageRecord);
 
         if (evaluation.isCorrect && updatedLobby.status !== LOBBY_STATUS_COMPLETED) {
           const nextQuestion = updatedLobby.questions[updatedLobby.currentQuestionIndex];
@@ -2804,8 +2806,8 @@ io.on('connection', socket => {
               content: `Round ${roundNumber}: ${nextQuestion.prompt}`,
               kind: 'system',
             });
-            messageBatch.push(nextPromptMessage);
             lobby.messages.push(nextPromptMessage);
+            messageBatch.push(nextPromptMessage);
           }
         } else if (evaluation.isCorrect && updatedLobby.status === LOBBY_STATUS_COMPLETED) {
           const closingMessage = createLobbyMessage({
@@ -2815,11 +2817,9 @@ io.on('connection', socket => {
             content: 'That wraps up the game! Thanks for playing together—great teamwork!',
             kind: 'system',
           });
-          messageBatch.push(closingMessage);
           lobby.messages.push(closingMessage);
+          messageBatch.push(closingMessage);
         }
-
-        lobby.messages.push(hostMessageRecord);
         // Ensure the latest question record includes the final attempt metadata (elapsed time).
         if (attemptRecord && lobby.questions?.[updatedLobby.currentQuestionIndex]) {
           const questionRecord = lobby.questions[updatedLobby.currentQuestionIndex];

@@ -392,10 +392,10 @@ const SoloConnection: React.FC<{ onStartMultiplayer: () => void }> = ({ onStartM
       <SafeAreaView style={styles.container}>
         <View style={[styles.card, styles.centeredCard]}>
           <IconSymbol name="person.crop.circle.badge.exclam" size={48} color="#6B8E6B" />
-          <Text style={styles.title}>로그인이 필요해요</Text>
-          <Text style={styles.subtitle}>Connection 탭을 이용하려면 먼저 로그인해 주세요.</Text>
+          <Text style={styles.title}>Sign In Required</Text>
+          <Text style={styles.subtitle}>Please sign in to use the Connection tab.</Text>
           <TouchableOpacity style={styles.primaryButton} onPress={handleLoginRedirect}>
-            <Text style={styles.primaryButtonText}>로그인 화면으로 이동</Text>
+            <Text style={styles.primaryButtonText}>Go to Sign In</Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>

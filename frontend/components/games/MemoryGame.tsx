@@ -352,7 +352,7 @@ export const MemoryGame: React.FC<MemoryGameProps> = ({ onClose, onSessionComple
   const renderIntro = () => (
     <View style={styles.card}>
       <Text style={styles.title}>List recall</Text>
-      <Text style={styles.subtitle}>순서를 기억했다가 버튼을 눌러 원래의 시퀀스를 다시 만들어 보세요.</Text>
+      <Text style={styles.subtitle}>Remember the order, then press the buttons to recreate the original sequence.</Text>
 
       <GameContextForm value={contextInputs} onChange={setContextInputs} />
 
@@ -398,13 +398,13 @@ export const MemoryGame: React.FC<MemoryGameProps> = ({ onClose, onSessionComple
   const renderImmediateRecall = () => (
     <View style={styles.card}>
       <Text style={styles.stageLabel}>Immediate recall</Text>
-      <Text style={styles.subtitle}>단어를 선택하여 순서를 완성하세요.</Text>
+      <Text style={styles.subtitle}>Select the next word to complete the sequence.</Text>
 
       {renderSelectedSequence(immediateSelections)}
 
       {immediateSelections.length < list.length && (
         <View>
-          <Text style={styles.optionHelper}>다음 순서에 맞는 단어를 고르세요.</Text>
+          <Text style={styles.optionHelper}>Pick the word that comes next in the sequence.</Text>
           {renderOptionGrid(immediateOptions, handleImmediatePick, immediateSelections)}
         </View>
       )}
@@ -428,7 +428,7 @@ export const MemoryGame: React.FC<MemoryGameProps> = ({ onClose, onSessionComple
   const renderDelay = () => (
     <View style={styles.card}>
       <Text style={styles.stageLabel}>Short break</Text>
-      <Text style={styles.subtitle}>잠시 후 같은 방법으로 다시 확인합니다.</Text>
+      <Text style={styles.subtitle}>We’ll check again shortly using the same method.</Text>
       <View style={styles.countdownBubble}>
         <Text style={styles.countdownText}>{countdown}</Text>
       </View>
@@ -441,13 +441,13 @@ export const MemoryGame: React.FC<MemoryGameProps> = ({ onClose, onSessionComple
   const renderDelayedRecall = () => (
     <View style={styles.card}>
       <Text style={styles.stageLabel}>Delayed recall</Text>
-      <Text style={styles.subtitle}>방금처럼 단어 순서를 다시 선택하세요.</Text>
+      <Text style={styles.subtitle}>Choose the word order again just like before.</Text>
 
       {renderSelectedSequence(delayedSelections)}
 
       {delayedSelections.length < list.length && (
         <View>
-          <Text style={styles.optionHelper}>다음 순서에 맞는 단어를 선택하세요.</Text>
+          <Text style={styles.optionHelper}>Select the word that fits the next position.</Text>
           {renderOptionGrid(delayedOptions, handleDelayedPick, delayedSelections)}
         </View>
       )}
