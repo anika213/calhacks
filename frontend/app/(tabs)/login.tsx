@@ -35,6 +35,7 @@ export default function LoginScreen() {
   const [name, setName] = useState('');
   const [age, setAge] = useState('');
   const [preferredLanguage, setPreferredLanguage] = useState('English');
+  const [isVisuallyImpaired, setIsVisuallyImpaired] = useState(false);
   const [dailyProgress, setDailyProgress] = useState<DailyProgress | null>(null);
   const [loadingProgress, setLoadingProgress] = useState(false);
 
@@ -104,71 +105,17 @@ export default function LoginScreen() {
               <Text style={styles.infoLabel}>Language</Text>
               <Text style={styles.infoValue}>{user.preferredLanguage}</Text>
             </View>
-          </View>
-
-          {/* Today's Progress Section */}
-          <View style={styles.progressSection}>
-            <Text style={styles.progressTitle}>Today's Progress</Text>
             
-            {loadingProgress ? (
-              <View style={styles.loadingContainer}>
-                <Text style={styles.loadingText}>Loading your progress...</Text>
-              </View>
-            ) : dailyProgress ? (
-              <View>
-                {/* Completed Tasks */}
-                {dailyProgress.completedTasks.length > 0 && (
-                  <View style={styles.taskSection}>
-                    <Text style={styles.taskSectionTitle}>✅ Completed Tasks</Text>
-                    {dailyProgress.completedTasks.map((task, index) => (
-                      <View key={index} style={styles.taskItem}>
-                        <IconSymbol name="checkmark.circle.fill" size={20} color="#34C759" />
-                        <Text style={styles.completedTaskText}>{task.name}</Text>
-                      </View>
-                    ))}
-                  </View>
-                )}
-
-                {/* Pending Tasks */}
-                {dailyProgress.pendingTasks.length > 0 && (
-                  <View style={styles.taskSection}>
-                    <Text style={styles.taskSectionTitle}>⏳ Pending Tasks</Text>
-                    {dailyProgress.pendingTasks.map((task, index) => (
-                      <View key={index} style={styles.taskItem}>
-                        <IconSymbol name="circle" size={20} color="#8E8E93" />
-                        <Text style={styles.pendingTaskText}>{task.name}</Text>
-                      </View>
-                    ))}
-                  </View>
-                )}
-
-                {/* Game Scores Summary */}
-                {dailyProgress.gameScores.length > 0 && (
-                  <View style={styles.scoreSection}>
-                    <Text style={styles.scoreSectionTitle}>🎮 Today's Scores</Text>
-                    {dailyProgress.gameScores.map((score, index) => (
-                      <View key={index} style={styles.scoreItem}>
-                        <Text style={styles.scoreGameName}>{score.gameName}</Text>
-                        <Text style={styles.scoreValue}>{score.accuracy}%</Text>
-                      </View>
-                    ))}
-                  </View>
-                )}
-
-                {/* No activity message */}
-                {dailyProgress.completedTasks.length === 0 && dailyProgress.pendingTasks.length > 0 && (
-                  <View style={styles.noActivityContainer}>
-                    <IconSymbol name="calendar.badge.clock" size={40} color="#8E8E93" />
-                    <Text style={styles.noActivityText}>Start your day with some activities!</Text>
-                  </View>
-                )}
-              </View>
-            ) : (
-              <View style={styles.errorContainer}>
-                <Text style={styles.errorText}>Unable to load progress</Text>
-              </View>
-            )}
+            <View style={styles.infoItem}>
+              <IconSymbol name="eye.fill" size={20} color="#6B8E6B" />
+              <Text style={styles.infoLabel}>Accessibility</Text>
+              <Text style={styles.infoValue}>
+                {(user as any)?.isVisuallyImpaired ? 'Visual Impairment Support' : 'Standard View'}
+              </Text>
+            </View>
           </View>
+
+       
 
           <TouchableOpacity 
             style={styles.logoutButton}
@@ -224,7 +171,8 @@ export default function LoginScreen() {
           password,
           name,
           age: parseInt(age),
-          preferredLanguage
+          preferredLanguage,
+          isVisuallyImpaired
         }),
       });
       
@@ -335,6 +283,33 @@ export default function LoginScreen() {
                 autoCorrect={false}
               />
             </View>
+
+            {isSignUp && (
+              <View style={styles.accessibilityContainer}>
+                <Text style={styles.accessibilityLabel}>Accessibility Settings</Text>
+                <View style={styles.toggleContainer}>
+                  <Text style={styles.toggleLabel}>I have visual impairment</Text>
+                  <TouchableOpacity
+                    style={[
+                      styles.toggleButton,
+                      { backgroundColor: isVisuallyImpaired ? '#6B8E6B' : '#E8EDE8' }
+                    ]}
+                    onPress={() => setIsVisuallyImpaired(!isVisuallyImpaired)}
+                  >
+                    <View style={[
+                      styles.toggleCircle,
+                      { 
+                        backgroundColor: isVisuallyImpaired ? '#FFFFFF' : '#FFFFFF',
+                        transform: [{ translateX: isVisuallyImpaired ? 20 : 2 }]
+                      }
+                    ]} />
+                  </TouchableOpacity>
+                </View>
+                <Text style={styles.accessibilityDescription}>
+                  This will adjust game interfaces for better accessibility
+                </Text>
+              </View>
+            )}
 
             {!isSignUp && (
               <TouchableOpacity 
@@ -709,5 +684,63 @@ const styles = StyleSheet.create({
     fontFamily: 'System',
     color: '#FF6B6B',
     fontWeight: '500',
+  },
+  // Accessibility styles
+  accessibilityContainer: {
+    marginBottom: 20,
+  },
+  accessibilityLabel: {
+    fontSize: 18,
+    fontFamily: 'System',
+    fontWeight: '600',
+    color: '#5A6B5A',
+    marginBottom: 12,
+    letterSpacing: 0.2,
+  },
+  toggleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#E8EDE8',
+  },
+  toggleLabel: {
+    fontSize: 18,
+    fontFamily: 'System',
+    color: '#5A6B5A',
+    fontWeight: '500',
+    letterSpacing: 0.2,
+  },
+  toggleButton: {
+    width: 50,
+    height: 30,
+    borderRadius: 15,
+    justifyContent: 'center',
+    paddingHorizontal: 2,
+  },
+  toggleCircle: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  accessibilityDescription: {
+    fontSize: 14,
+    fontFamily: 'System',
+    color: '#7A8B7A',
+    fontStyle: 'italic',
+    letterSpacing: 0.2,
   },
 });

@@ -117,7 +117,9 @@ app.post('/api/auth/register', async (req, res) => {
       name: name.trim(),
       age: parseInt(age),
       preferredLanguage: preferredLanguage || 'English',
+      isVisuallyImpaired: isVisuallyImpaired || false,
       accuracies: [], // Initialize empty accuracies array
+      mhealth_games: [], // Initialize empty mental health games array
       createdAt: new Date(),
       updatedAt: new Date()
     };
@@ -204,7 +206,8 @@ app.post('/api/auth/login', async (req, res) => {
         email: user.email,
         name: user.name,
         age: user.age,
-        preferredLanguage: user.preferredLanguage
+        preferredLanguage: user.preferredLanguage,
+        isVisuallyImpaired: user.isVisuallyImpaired || false
       }
     });
 

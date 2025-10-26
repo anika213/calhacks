@@ -7,6 +7,7 @@ interface User {
   name: string;
   age: number;
   preferredLanguage: string;
+  isVisuallyImpaired?: boolean;
 }
 
 interface AuthContextType {
@@ -14,7 +15,7 @@ interface AuthContextType {
   token: string | null;
   isLoading: boolean;
   login: (email: string, password: string) => Promise<boolean>;
-  register: (email: string, password: string, name: string, age: number, preferredLanguage?: string) => Promise<boolean>;
+  register: (email: string, password: string, name: string, age: number, preferredLanguage?: string, isVisuallyImpaired?: boolean) => Promise<boolean>;
   logout: () => Promise<void>;
   checkAuthStatus: () => Promise<void>;
 }
@@ -112,7 +113,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     password: string, 
     name: string, 
     age: number, 
-    preferredLanguage: string = 'English'
+    preferredLanguage: string = 'English',
+    isVisuallyImpaired: boolean = false
   ): Promise<boolean> => {
     try {
       setIsLoading(true);
@@ -122,7 +124,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ email, password, name, age, preferredLanguage }),
+        body: JSON.stringify({ email, password, name, age, preferredLanguage, isVisuallyImpaired }),
       });
 
       const data = await response.json();

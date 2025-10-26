@@ -26,6 +26,9 @@ export default function CognitiveGameTab() {
   const [gameCompleted, setGameCompleted] = useState(false);
   const [loading, setLoading] = useState(false);
 
+  // Check if user has visual impairment
+  const isVisuallyImpaired = (user as any)?.isVisuallyImpaired || false;
+
   const colorMap = {
     red: '#FF3B30',
     blue: '#007AFF',
@@ -171,7 +174,10 @@ export default function CognitiveGameTab() {
         <View style={styles.instructionsContainer}>
           <Text style={styles.instructionsTitle}>Stroop Test</Text>
           <Text style={styles.instructionsText}>
-            Look at the word below and select the COLOR it's displayed in, not what the word says.
+            {isVisuallyImpaired 
+              ? "Listen to the word and select the COLOR it represents, not what the word says."
+              : "Look at the word below and select the COLOR it's displayed in, not what the word says."
+            }
           </Text>
         </View>
 
@@ -180,11 +186,20 @@ export default function CognitiveGameTab() {
           <Text 
             style={[
               styles.wordText,
-              { color: getColorValue(currentTrial.color) }
+              { 
+                color: getColorValue(currentTrial.color),
+                fontSize: isVisuallyImpaired ? 36 : 28,
+                fontWeight: isVisuallyImpaired ? 'bold' : '600'
+              }
             ]}
           >
             {currentTrial.word}
           </Text>
+          {isVisuallyImpaired && (
+            <Text style={styles.accessibilityHint}>
+              The word "{currentTrial.word}" is displayed in {currentTrial.color} color
+            </Text>
+          )}
           {/* Debug info */}
           {/* <Text style={styles.debugText}>
             Debug: Color="{currentTrial.color}" → {getColorValue(currentTrial.color)}
@@ -201,7 +216,10 @@ export default function CognitiveGameTab() {
         {/* Answer Options */}
         <View style={styles.optionsContainer}>
           <Text style={styles.optionsTitle}>What color is the text?</Text>
-          <View style={styles.optionsGrid}>
+          <View style={[
+            styles.optionsGrid,
+            isVisuallyImpaired && styles.optionsGridAccessible
+          ]}>
             {Object.entries({
               red: '#E57373',
               blue: '#81C7F4', 
@@ -210,10 +228,19 @@ export default function CognitiveGameTab() {
             }).map(([colorName, colorValue]) => (
               <TouchableOpacity
                 key={colorName}
-                style={[styles.optionButton, { backgroundColor: colorValue }]}
+                style={[
+                  styles.optionButton, 
+                  { backgroundColor: colorValue },
+                  isVisuallyImpaired && styles.optionButtonAccessible
+                ]}
                 onPress={() => handleAnswer(colorName)}
               >
-                <Text style={styles.optionText}>{colorName.toUpperCase()}</Text>
+                <Text style={[
+                  styles.optionText,
+                  isVisuallyImpaired && styles.optionTextAccessible
+                ]}>
+                  {colorName.toUpperCase()}
+                </Text>
               </TouchableOpacity>
             ))}
           </View>
@@ -526,5 +553,28 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontFamily: 'System',
     fontWeight: '600',
+  },
+  // Accessibility styles
+  accessibilityHint: {
+    fontSize: 16,
+    fontFamily: 'System',
+    color: '#7A8B7A',
+    textAlign: 'center',
+    marginTop: 12,
+    fontStyle: 'italic',
+  },
+  optionsGridAccessible: {
+    gap: 16,
+  },
+  optionButtonAccessible: {
+    paddingVertical: 20,
+    paddingHorizontal: 16,
+    minHeight: 60,
+    borderWidth: 3,
+    borderColor: '#FFFFFF',
+  },
+  optionTextAccessible: {
+    fontSize: 18,
+    fontWeight: 'bold',
   },
 });

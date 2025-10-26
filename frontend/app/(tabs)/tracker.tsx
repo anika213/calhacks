@@ -16,13 +16,29 @@ const { width } = Dimensions.get('window');
 interface AccuracyData {
   gameName: string;
   accuracy: number;
-  gameType: string;
+  gameType?: string;
   date: string;
+  rawScore?: number;
+  maxScore?: number;
+}
+
+interface MentalHealthData {
+  responses: Array<{
+    questionId: number;
+    statement: string;
+    score: number;
+  }>;
+  rawScore: number;
+  accuracy: number;
+  maxScore: number;
+  completedAt: string;
+  createdAt: string;
 }
 
 export default function TrackerScreen() {
   const { user, token } = useAuth();
   const [accuracyData, setAccuracyData] = useState<AccuracyData[]>([]);
+  const [mentalHealthData, setMentalHealthData] = useState<MentalHealthData[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -50,6 +66,7 @@ export default function TrackerScreen() {
       if (response.ok) {
         const data = await response.json();
         setAccuracyData(data.user.accuracies || []);
+        setMentalHealthData(data.user.mhealth_games || []);
       } else {
         setError('Failed to fetch accuracy data');
       }
@@ -61,15 +78,28 @@ export default function TrackerScreen() {
     }
   };
 
-  // Calculate statistics from accuracy data
+  // Calculate statistics from accuracy data and mental health data
   const calculateStats = () => {
-    if (accuracyData.length === 0) return null;
+    // Process mental health data from mhealth_games array
+    const mentalHealthEntries: AccuracyData[] = mentalHealthData.map(mh => ({
+      gameName: 'Mental Health Assessment',
+      accuracy: mh.accuracy,
+      gameType: 'mental_health',
+      date: mh.completedAt,
+      rawScore: mh.rawScore,
+      maxScore: mh.maxScore
+    }));
 
-    const totalSessions = accuracyData.length;
-    const averageAccuracy = accuracyData.reduce((sum, item) => sum + item.accuracy, 0) / totalSessions;
-    const highestAccuracy = Math.max(...accuracyData.map(item => item.accuracy));
-    const cognitiveGames = accuracyData.filter(item => item.gameType === 'cognitive');
-    const mentalHealthGames = accuracyData.filter(item => item.gameType === 'mental_health');
+    // Combine all data
+    const allData = [...accuracyData, ...mentalHealthEntries];
+    
+    if (allData.length === 0) return null;
+
+    const totalSessions = allData.length;
+    const averageAccuracy = allData.reduce((sum, item) => sum + item.accuracy, 0) / totalSessions;
+    const highestAccuracy = Math.max(...allData.map(item => item.accuracy));
+    const cognitiveGames = allData.filter(item => item.gameType === 'cognitive');
+    const mentalHealthGames = allData.filter(item => item.gameType === 'mental_health');
 
     return {
       totalSessions,
@@ -82,12 +112,25 @@ export default function TrackerScreen() {
 
   const stats = calculateStats();
   const renderAccuracyChart = () => {
-    if (accuracyData.length === 0) return null;
+    // Process mental health data for chart
+    const mentalHealthEntries: AccuracyData[] = mentalHealthData.map(mh => ({
+      gameName: 'Mental Health Assessment',
+      accuracy: mh.accuracy,
+      gameType: 'mental_health',
+      date: mh.completedAt,
+      rawScore: mh.rawScore,
+      maxScore: mh.maxScore
+    }));
+
+    // Combine all data
+    const allData = [...accuracyData, ...mentalHealthEntries];
+    
+    if (allData.length === 0) return null;
   
-    const cognitiveData = accuracyData
+    const cognitiveData = allData
       .filter(item => item.gameType === 'cognitive')
       .slice(-10);
-    const mentalHealthData = accuracyData
+    const mentalHealthChartData = allData
       .filter(item => item.gameType === 'mental_health')
       .slice(-10);
   
@@ -248,7 +291,7 @@ export default function TrackerScreen() {
       <View style={styles.chartContainer}>
         <Text style={styles.chartTitle}>Your Accuracy Progress</Text>
         {renderScatter(cognitiveData, 'Cognitive Games', '#6B8E6B')}
-        {renderScatter(mentalHealthData, 'Mental Health Games', '#8B6B8B')}
+        {renderScatter(mentalHealthChartData, 'Mental Health Games', '#8B6B8B')}
       </View>
     );
   };
@@ -313,32 +356,49 @@ export default function TrackerScreen() {
             {/* Recent Games List */}
             <View style={styles.recentGamesContainer}>
               <Text style={styles.recentGamesTitle}>Recent Games</Text>
-              {accuracyData.slice(-5).reverse().map((item, index) => (
-                <View key={index} style={styles.gameItem}>
-                  <View style={styles.gameInfo}>
-                    <Text style={styles.gameName}>{item.gameName}</Text>
-                    <Text style={styles.gameDate}>
-                      {new Date(item.date).toLocaleDateString('en-US', { 
-                        month: 'short', 
-                        day: 'numeric',
-                        hour: '2-digit',
-                        minute: '2-digit'
-                      })}
-                    </Text>
-                  </View>
-                  <View style={styles.gameScore}>
-                    <Text style={styles.scoreValue}>{item.accuracy}%</Text>
-                    <View style={[
-                      styles.gameTypeBadge, 
-                      { backgroundColor: item.gameType === 'cognitive' ? '#6B8E6B' : '#8B6B8B' }
-                    ]}>
-                      <Text style={styles.gameTypeText}>
-                        {item.gameType === 'cognitive' ? 'Cognitive' : 'Mental Health'}
+              {(() => {
+                // Process mental health data for recent games
+                const mentalHealthEntries: AccuracyData[] = mentalHealthData.map(mh => ({
+                  gameName: 'Mental Health Assessment',
+                  accuracy: mh.accuracy,
+                  gameType: 'mental_health',
+                  date: mh.completedAt,
+                  rawScore: mh.rawScore,
+                  maxScore: mh.maxScore
+                }));
+
+                // Combine all data and sort by date
+                const allData = [...accuracyData, ...mentalHealthEntries]
+                  .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+                  .slice(0, 5);
+
+                return allData.map((item, index) => (
+                  <View key={index} style={styles.gameItem}>
+                    <View style={styles.gameInfo}>
+                      <Text style={styles.gameName}>{item.gameName}</Text>
+                      <Text style={styles.gameDate}>
+                        {new Date(item.date).toLocaleDateString('en-US', { 
+                          month: 'short', 
+                          day: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit'
+                        })}
                       </Text>
                     </View>
+                    <View style={styles.gameScore}>
+                      <Text style={styles.scoreValue}>{item.accuracy}%</Text>
+                      <View style={[
+                        styles.gameTypeBadge, 
+                        { backgroundColor: item.gameType === 'cognitive' ? '#6B8E6B' : '#8B6B8B' }
+                      ]}>
+                        <Text style={styles.gameTypeText}>
+                          {item.gameType === 'cognitive' ? 'Cognitive' : 'Mental Health'}
+                        </Text>
+                      </View>
+                    </View>
                   </View>
-                </View>
-              ))}
+                ));
+              })()}
             </View>
           </>
         )}

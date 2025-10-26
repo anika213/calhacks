@@ -60,6 +60,9 @@ export default function MentalHealthScreen() {
   const [isCompleted, setIsCompleted] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
 
+  // Check if user has visual impairment
+  const isVisuallyImpaired = (user as any)?.isVisuallyImpaired || false;
+
   const currentQuestion = WHO5_QUESTIONS[currentQuestionIndex];
   const isLastQuestion = currentQuestionIndex === WHO5_QUESTIONS.length - 1;
 
@@ -198,11 +201,17 @@ export default function MentalHealthScreen() {
           </View>
         </View>
 
-        <Text style={styles.questionStatement}>
+        <Text style={[
+          styles.questionStatement,
+          isVisuallyImpaired && styles.questionStatementAccessible
+        ]}>
           {currentQuestion.statement}
         </Text>
 
-        <Text style={styles.instructionText}>
+        <Text style={[
+          styles.instructionText,
+          isVisuallyImpaired && styles.instructionTextAccessible
+        ]}>
           Please select how often you have felt this way during the past two weeks:
         </Text>
 
@@ -210,11 +219,19 @@ export default function MentalHealthScreen() {
           {SCALE_OPTIONS.map((option, index) => (
             <TouchableOpacity
               key={index}
-              style={styles.optionButton}
+              style={[
+                styles.optionButton,
+                isVisuallyImpaired && styles.optionButtonAccessible
+              ]}
               onPress={() => handleAnswer(option.value)}
               disabled={isLoading}
             >
-              <Text style={styles.optionText}>{option.label}</Text>
+              <Text style={[
+                styles.optionText,
+                isVisuallyImpaired && styles.optionTextAccessible
+              ]}>
+                {option.label}
+              </Text>
             </TouchableOpacity>
           ))}
         </View>
@@ -416,5 +433,26 @@ const styles = StyleSheet.create({
     fontFamily: 'System',
     fontWeight: '600',
     letterSpacing: 0.3,
+  },
+  // Accessibility styles
+  questionStatementAccessible: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    lineHeight: 32,
+  },
+  instructionTextAccessible: {
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  optionButtonAccessible: {
+    paddingVertical: 20,
+    paddingHorizontal: 20,
+    minHeight: 60,
+    borderWidth: 2,
+    borderColor: '#E8EDE8',
+  },
+  optionTextAccessible: {
+    fontSize: 18,
+    fontWeight: 'bold',
   },
 });
