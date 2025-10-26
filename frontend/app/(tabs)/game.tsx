@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { TrafficLightBadge } from '@/components/games/TrafficLightBadge';
@@ -156,6 +157,7 @@ const buildHistoryEntries = (history: Record<GameKey, AnySessionRecord[]>): Hist
 export default function GameScreen() {
   const { history, latestByGame, compositeIndex } = useGameSessions();
   const [activeGame, setActiveGame] = useState<ActiveGame>(null);
+  const router = useRouter();
 
   const latestStroop = latestByGame.stroop as StroopSessionRecord | undefined;
   const latestMemory = latestByGame.memory as MemorySessionRecord | undefined;
@@ -277,6 +279,22 @@ export default function GameScreen() {
           })}
         </View>
 
+        <Text style={styles.sectionTitle}>Mental Health</Text>
+        <TouchableOpacity
+          style={styles.mentalHealthCard}
+          onPress={() => router.push('/(tabs)/mhealth')}
+        >
+          <View style={styles.gameHeader}>
+            <View style={[styles.iconBadge, { backgroundColor: '#E8F0E8' }]}>
+              <IconSymbol name="heart.fill" size={24} color="#6B8E6B" />
+            </View>
+          </View>
+          <Text style={styles.gameTitle}>Mental Health Assessment</Text>
+          <Text style={styles.gameDescription}>
+            Complete the WHO-5 Well-Being Index to track your mental wellness.
+          </Text>
+        </TouchableOpacity>
+
         <View style={styles.historyCard}>
           <View style={styles.historyHeader}>
             <IconSymbol name="clock" size={18} color="#6B8E6B" />
@@ -372,6 +390,19 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     padding: 18,
     gap: 12,
+    shadowColor: '#B8C5B8',
+    shadowOpacity: 0.08,
+    shadowOffset: { width: 0, height: 4 },
+    shadowRadius: 10,
+    elevation: 2,
+  },
+  mentalHealthCard: {
+    backgroundColor: '#F9FDF9',
+    borderRadius: 20,
+    padding: 18,
+    gap: 12,
+    borderWidth: 2,
+    borderColor: '#E8F0E8',
     shadowColor: '#B8C5B8',
     shadowOpacity: 0.08,
     shadowOffset: { width: 0, height: 4 },
