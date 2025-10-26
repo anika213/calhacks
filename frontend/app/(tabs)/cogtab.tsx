@@ -2,29 +2,58 @@ import React, { useState, useEffect } from 'react';
 import { SafeAreaView, ScrollView, StyleSheet, View, Text, TouchableOpacity, Alert } from 'react-native';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { useAuth } from '@/contexts/AuthContext';
+import { Image } from 'react-native';
 
-interface Trial {
+
+interface StroopTrial {
   word: string;
   color: string;
   correctAnswer: string;
 }
 
-interface GameData {
+interface StroopGameData {
   gameType: string;
   subType: string;
   metadata: {
-    trials: Trial[];
+    trials: StroopTrial[];
   };
+}
+
+interface ListRecallData {
+  gameType: string;
+  subType: string;
+  metadata: {
+    trials: string[][];
+  };
+}
+
+type GameData = StroopGameData | ListRecallData;
+
+// Type guard functions
+function isStroopGameData(data: GameData): data is StroopGameData {
+  return data.subType === 'Stroop';
+}
+
+function isListRecallData(data: GameData): data is ListRecallData {
+  return data.subType === 'ListRecall';
 }
 
 export default function CognitiveGameTab() {
   const { user, token } = useAuth();
   const [gameData, setGameData] = useState<GameData | null>(null);
+  const [gameSubType, setGameSubType] = useState<string>('');
   const [currentTrialIndex, setCurrentTrialIndex] = useState(0);
   const [correctAnswers, setCorrectAnswers] = useState(0);
   const [gameStarted, setGameStarted] = useState(false);
   const [gameCompleted, setGameCompleted] = useState(false);
   const [loading, setLoading] = useState(false);
+  
+  // List Recall state
+  const [showWord, setShowWord] = useState(true);
+  const [currentWordIndex, setCurrentWordIndex] = useState(0);
+  const [displayingWords, setDisplayingWords] = useState(false);
+  const [recallOrder, setRecallOrder] = useState<string[]>([]);
+  const [selectedWord, setSelectedWord] = useState<string | null>(null);
 
   // Check if user has visual impairment
   const isVisuallyImpaired = (user as any)?.isVisuallyImpaired || false;
@@ -59,10 +88,11 @@ export default function CognitiveGameTab() {
       const response = await fetch('http://localhost:8000/api/random-game/Memory');
       const result = await response.json();
       
-      if (result.success && result.data && result.data.subType === 'Stroop') {
+      if (result.success && result.data) {
         setGameData(result.data);
+        setGameSubType(result.data.subType);
       } else {
-        Alert.alert('Error', 'Unable to load Stroop test data');
+        Alert.alert('Error', 'Unable to load game data');
       }
     } catch (error) {
       console.error('Error fetching game data:', error);
@@ -84,7 +114,7 @@ export default function CognitiveGameTab() {
   };
 
   const handleAnswer = (selectedColor: string) => {
-    if (!gameData) return;
+    if (!gameData || !isStroopGameData(gameData)) return;
 
     const currentTrial = gameData.metadata.trials[currentTrialIndex];
     const isCorrect = selectedColor === currentTrial.correctAnswer;
@@ -105,12 +135,14 @@ export default function CognitiveGameTab() {
   const completeGame = async (finalCorrectAnswers?: number) => {
     if (!gameData) return;
 
+    const trialLength = isStroopGameData(gameData) ? gameData.metadata.trials.length : 
+                        isListRecallData(gameData) ? gameData.metadata.trials.length : 1;
     const correctCount = finalCorrectAnswers !== undefined ? finalCorrectAnswers : correctAnswers;
-    const accuracy = Math.round((correctCount / gameData.metadata.trials.length) * 100);
+    const accuracy = Math.round((correctCount / trialLength) * 100);
     
     console.log('Game completion:', {
       correctCount,
-      totalTrials: gameData.metadata.trials.length,
+      totalTrials: trialLength,
       accuracy,
       finalCorrectAnswers,
       stateCorrectAnswers: correctAnswers
@@ -140,7 +172,7 @@ export default function CognitiveGameTab() {
 
     Alert.alert(
       'Game Complete!',
-      `You scored ${accuracy}%!\nCorrect answers: ${correctCount}/${gameData.metadata.trials.length}`,
+      `You scored ${accuracy}%!\nCorrect answers: ${correctCount}/${trialLength}`,
       [
         { text: 'Play Again', onPress: () => startGame() },
         { text: 'Done', onPress: () => setGameStarted(false) }
@@ -148,8 +180,175 @@ export default function CognitiveGameTab() {
     );
   };
 
-  const renderGame = () => {
-    if (!gameData) return null;
+  // List Recall Game Logic
+  const startListRecallGame = () => {
+    if (!gameData || !isListRecallData(gameData)) return;
+    setGameStarted(true);
+    setDisplayingWords(true);
+    setCurrentWordIndex(0);
+    setRecallOrder([]);
+    setSelectedWord(null);
+  };
+
+  useEffect(() => {
+    if (!gameStarted || !displayingWords || gameSubType !== 'ListRecall' || !gameData || !isListRecallData(gameData)) return;
+    
+    const currentList = gameData.metadata.trials[currentTrialIndex];
+    
+    if (currentWordIndex < currentList.length) {
+      // Show word for 5 seconds
+      setShowWord(true);
+      const timer1 = setTimeout(() => {
+        setShowWord(false);
+      }, 3000);
+
+      // Hide for 5 seconds, then show next word
+      const timer2 = setTimeout(() => {
+        if (currentWordIndex < currentList.length - 1) {
+          setCurrentWordIndex(prev => prev + 1);
+        } else {
+          // All words shown, start recall phase
+          setDisplayingWords(false);
+          // Shuffle the words for recall
+          const shuffled = [...currentList].sort(() => Math.random() - 0.5);
+          setRecallOrder(shuffled);
+        }
+      }, 5000);
+
+      return () => {
+        clearTimeout(timer1);
+        clearTimeout(timer2);
+      };
+    }
+  }, [currentWordIndex, displayingWords, gameStarted, gameSubType]);
+
+  const handleWordSelect = (word: string) => {
+    if (!gameData || !isListRecallData(gameData)) return;
+    const currentList = gameData.metadata.trials[currentTrialIndex];
+    
+    console.log('handleWordSelect called:', word, 'Current selected:', selectedWord);
+    console.log('Current recallOrder:', recallOrder);
+    
+    if (selectedWord === null) {
+      console.log('Selecting word:', word);
+      setSelectedWord(word);
+    } else if (selectedWord === word) {
+      console.log('Deselecting word:', word);
+      setSelectedWord(null);
+    } else {
+      // Swap words
+      const newOrder = [...recallOrder];
+      const word1Index = newOrder.indexOf(selectedWord);
+      const word2Index = newOrder.indexOf(word);
+      console.log('Swapping:', selectedWord, 'at index', word1Index, 'with', word, 'at index', word2Index);
+      if (word1Index !== -1 && word2Index !== -1) {
+        [newOrder[word1Index], newOrder[word2Index]] = [newOrder[word2Index], newOrder[word1Index]];
+        setRecallOrder(newOrder);
+        console.log('New order:', newOrder);
+      }
+      setSelectedWord(null);
+    }
+  };
+
+  const submitListRecall = () => {
+    if (!gameData || !isListRecallData(gameData)) return;
+    
+    const currentList = gameData.metadata.trials[currentTrialIndex];
+    const correctOrder = currentList;
+    let correct = 0;
+    
+    for (let i = 0; i < recallOrder.length; i++) {
+      if (recallOrder[i] === correctOrder[i]) {
+        correct++;
+      }
+    }
+    
+    const accuracy = Math.round((correct / correctOrder.length) * 100);
+    
+    // Move to next trial
+    if (currentTrialIndex < gameData.metadata.trials.length - 1) {
+      setCurrentTrialIndex(prev => prev + 1);
+      setDisplayingWords(true);
+      setCurrentWordIndex(0);
+      setRecallOrder([]);
+      setSelectedWord(null);
+    } else {
+      // Game complete
+      completeGame(accuracy);
+    }
+  };
+
+  const renderListRecallGame = () => {
+    if (!gameData || !isListRecallData(gameData)) return null;
+    
+    const currentList = gameData.metadata.trials[currentTrialIndex];
+    
+    if (displayingWords) {
+      return (
+        <View style={styles.gameContainer}>
+          {/* Word Display Phase */}
+          <View style={styles.wordContainer}>
+            {showWord && currentWordIndex < currentList.length && (
+              <Text style={[
+                styles.wordText,
+                { 
+                  fontSize: isVisuallyImpaired ? 48 : 32,
+                  fontWeight: isVisuallyImpaired ? 'bold' : '700'
+                }
+              ]}>
+                {currentList[currentWordIndex]}
+              </Text>
+            )}
+          </View>
+        </View>
+      );
+    }
+    
+    // Recall Phase
+    return (
+      <View style={styles.gameContainer}>
+        <Text style={styles.instructionsTitle}>Rearrange the words in the correct order:</Text>
+        
+        <View style={styles.recallContainer}>
+          {recallOrder.map((word, index) => (
+            <TouchableOpacity
+              key={`tile-${index}`}
+              style={[
+                styles.wordTile,
+                selectedWord === word && styles.wordTileSelected,
+                isVisuallyImpaired && styles.wordTileAccessible
+              ]}
+              onPress={() => handleWordSelect(word)}
+              activeOpacity={0.7}
+            >
+              <Text style={[
+                styles.wordTileText,
+                isVisuallyImpaired && styles.wordTileTextAccessible
+              ]}>
+                {word}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+        
+        {selectedWord && (
+          <Text style={styles.selectionHint}>
+            Tap another tile to swap with "{selectedWord}"
+          </Text>
+        )}
+        
+        <TouchableOpacity 
+          style={styles.submitButton}
+          onPress={submitListRecall}
+        >
+          <Text style={styles.submitButtonText}>Submit</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  };
+
+  const renderStroopGame = () => {
+    if (!gameData || !isStroopGameData(gameData)) return null;
 
     const currentTrial = gameData.metadata.trials[currentTrialIndex];
     const progress = ((currentTrialIndex + 1) / gameData.metadata.trials.length) * 100;
@@ -274,29 +473,52 @@ export default function CognitiveGameTab() {
     );
   }
 
+    const gameTitle = gameSubType === 'ListRecall' ? 'List Recall Test' : 'Stroop Test';
+    const gameDescription = gameSubType === 'ListRecall' 
+      ? 'Memorize a list of words and recall them in the correct order.'
+      : 'Test your cognitive control by identifying the color of text while ignoring what the word says.';
+    
+    const trialCount = gameData ? (
+      isListRecallData(gameData) ? gameData.metadata.trials.length :
+      isStroopGameData(gameData) ? gameData.metadata.trials.length : 0
+    ) : 0;
+
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView contentContainerStyle={styles.scrollContent}>
-        {!gameStarted ? (
-          <View style={styles.startContainer}>
-            <IconSymbol name="brain.head.profile" size={80} color="#6B8E6B" />
-            <Text style={styles.gameTitle}>Stroop Test</Text>
-            <Text style={styles.gameDescription}>
-              Test your cognitive control by identifying the color of text while ignoring what the word says.
-            </Text>
-            <Text style={styles.gameInstructions}>
-              • Look at each word carefully{'\n'}
-              • Select the COLOR the text appears in{'\n'}
-              • Ignore what the word actually says{'\n'}
-              • Complete all {gameData.metadata.trials.length} trials
-            </Text>
-            <TouchableOpacity style={styles.startButton} onPress={startGame}>
-              <Text style={styles.startButtonText}>Start Test</Text>
-            </TouchableOpacity>
-          </View>
-        ) : (
-          renderGame()
-        )}
+        <ScrollView contentContainerStyle={styles.scrollContent}>
+          {!gameStarted ? (
+            <View style={styles.startContainer}>
+              <IconSymbol name="brain.head.profile" size={80} color="#6B8E6B" />
+              <Text style={styles.gameTitle}>{gameTitle}</Text>
+              <Text style={styles.gameDescription}>
+                {gameDescription}
+              </Text>
+              {gameSubType === 'ListRecall' && (
+                <Text style={styles.gameInstructions}>
+                  • Words will appear one at a time{'\n'}
+                  • Memorize the order of the words{'\n'}
+                  • Rearrange the words in the correct order{'\n'}
+                  • Complete all {trialCount} trials
+                </Text>
+              )}
+              {gameSubType === 'Stroop' && (
+                <Text style={styles.gameInstructions}>
+                  • Look at each word carefully{'\n'}
+                  • Select the COLOR the text appears in{'\n'}
+                  • Ignore what the word actually says{'\n'}
+                  • Complete all {trialCount} trials
+                </Text>
+              )}
+              <TouchableOpacity 
+                style={styles.startButton} 
+                onPress={gameSubType === 'ListRecall' ? startListRecallGame : startGame}
+              >
+                <Text style={styles.startButtonText}>Start Test</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            gameSubType === 'ListRecall' ? renderListRecallGame() : renderStroopGame()
+          )}
       </ScrollView>
     </SafeAreaView>
   );
@@ -353,33 +575,41 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    padding: 20,
   },
   gameTitle: {
-    fontSize: 32,
+    fontSize: 34,
     fontFamily: 'System',
-    fontWeight: '600',
-    color: '#5A6B5A',
-    marginTop: 20,
-    marginBottom: 16,
+    fontWeight: '700',
+    color: '#3A4A3A',
+    marginTop: 24,
+    marginBottom: 12,
     textAlign: 'center',
+    letterSpacing: -0.5,
   },
   gameDescription: {
-    fontSize: 18,
+    fontSize: 17,
     fontFamily: 'System',
-    color: '#7A8B7A',
+    color: '#6B7B6B',
     textAlign: 'center',
     lineHeight: 26,
-    marginBottom: 24,
+    marginBottom: 32,
     fontWeight: '400',
+    paddingHorizontal: 20,
   },
   gameInstructions: {
     fontSize: 16,
     fontFamily: 'System',
     color: '#5A6B5A',
     textAlign: 'left',
-    lineHeight: 24,
-    marginBottom: 40,
-    paddingHorizontal: 20,
+    lineHeight: 26,
+    marginBottom: 32,
+    paddingHorizontal: 24,
+    paddingVertical: 20,
+    backgroundColor: '#F8FAF8',
+    borderRadius: 16,
+    width: '100%',
+    maxWidth: 400,
   },
   startButton: {
     backgroundColor: '#6B8E6B',
@@ -576,5 +806,84 @@ const styles = StyleSheet.create({
   optionTextAccessible: {
     fontSize: 18,
     fontWeight: 'bold',
+  },
+  recallContainer: {
+    flexDirection: 'row',
+    flexWrap: 'nowrap',          // force single line layout
+    justifyContent: 'center',
+    alignItems: 'center',
+    overflow: 'scroll',          // allow horizontal scrolling if too wide
+    marginVertical: 20,
+    paddingHorizontal: 10,
+  },
+  wordTile: {
+    backgroundColor: '#6B8E6B',
+    paddingVertical: 14,
+    paddingHorizontal: 24,
+    borderRadius: 12,
+    marginHorizontal: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
+    flexShrink: 0,              // prevents tiles from shrinking or wrapping
+    minWidth: 80,
+  },
+  
+  wordTileSelected: {
+    backgroundColor: '#8EBB8E',
+    borderWidth: 3,
+    borderColor: '#FFFFFF',
+    transform: [{ scale: 1.1 }],
+  },
+  wordTileAccessible: {
+    paddingVertical: 18,
+    paddingHorizontal: 24,
+    minWidth: 120,
+    minHeight: 60,
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+  },
+  wordTileText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontFamily: 'System',
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  wordTileTextAccessible: {
+    fontSize: 20,
+    fontWeight: 'bold',
+  },
+  submitButton: {
+    backgroundColor: '#6B8E6B',
+    paddingVertical: 16,
+    paddingHorizontal: 40,
+    borderRadius: 16,
+    alignSelf: 'center',
+    marginTop: 20,
+    shadowColor: '#B8C5B8',
+    shadowOffset: {
+      width: 0,
+      height: 4,
+    },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  submitButtonText: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontFamily: 'System',
+    fontWeight: '600',
+  },
+  selectionHint: {
+    fontSize: 14,
+    fontFamily: 'System',
+    color: '#6B8E6B',
+    textAlign: 'center',
+    marginTop: 12,
+    fontStyle: 'italic',
   },
 });
