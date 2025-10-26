@@ -40,7 +40,7 @@ export default function TrackerScreen() {
     
     setLoading(true);
     try {
-      const response = await fetch('http://192.168.23.164:8000/api/auth/me', {
+      const response = await fetch('http://localhost:8000/api/auth/me', {
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',

@@ -50,7 +50,7 @@ export default function LoginScreen() {
     
     setLoadingProgress(true);
     try {
-      const response = await fetch('http://192.168.23.164:8000/api/progress/daily', {
+      const response = await fetch('http://localhost:8000/api/progress/daily', {
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
@@ -206,7 +206,7 @@ export default function LoginScreen() {
     try {
       // Step 1: Check if email already exists
       const checkResponse = await fetch(
-        `http://192.168.23.164:8000/api/auth/check-email?email=${encodeURIComponent(email)}`
+        `http://localhost:8000/api/auth/check-email?email=${encodeURIComponent(email)}`
       );
             const checkData = await checkResponse.json();
   
@@ -216,7 +216,7 @@ export default function LoginScreen() {
       }
   
       // Step 2: If not exists, proceed to register
-      const registerResponse = await fetch(`http://192.168.23.164:8000/api/auth/register`, {
+      const registerResponse = await fetch(`http://localhost:8000/api/auth/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

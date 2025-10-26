@@ -54,9 +54,7 @@ const authenticateToken = (req, res, next) => {
   }
 
   jwt.verify(token, JWT_SECRET, (err, user) => {
-    if (err) {
-      return res.status(403).json({ success: false, message: 'Invalid or expired token' });
-    }
+    if (err) return res.status(403).json({ success: false, message: 'Invalid or expired token' });
     req.user = user;
     next();
   });
@@ -129,10 +127,13 @@ app.post('/api/auth/register', async (req, res) => {
 
     // Generate JWT token
     const token = jwt.sign(
-      { userId: result.insertedId, email: email.toLowerCase() },
+      { userId: user._id, email: user.email },
       JWT_SECRET,
       { expiresIn: '7d' }
     );
+    
+    
+
 
     res.status(201).json({
       success: true,
@@ -473,21 +474,17 @@ app.get('/api/progress/daily', authenticateToken, async (req, res) => {
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
 
-    // Get today's game scores from user's accuracies array
+    // Get today's game scores and mental health assessments from user document
     const user = await usersCollection.findOne({ _id: new ObjectId(userId) });
     const todayScores = user?.accuracies?.filter(score => {
       const scoreDate = new Date(score.date);
       return scoreDate >= today && scoreDate < tomorrow;
     }) || [];
-
-    // Get today's mental health check-ins
-    const mentalHealthCollection = database.collection("mental_health_analyses");
-    const todayMentalHealth = await mentalHealthCollection
-      .find({ 
-        userId: new ObjectId(userId),
-        timestamp: { $gte: today, $lt: tomorrow }
-      })
-      .toArray();
+    
+    const todayMentalHealth = (user?.mhealth_games || []).filter(assessment => {
+      const assessmentDate = new Date(assessment.completedAt);
+      return assessmentDate >= today && assessmentDate < tomorrow;
+    });
 
     // Define available tasks
     const availableTasks = [
@@ -576,6 +573,109 @@ app.get('/api/random-game/:gameType', async (req, res) => {
   }
 });
 
+// Mental Health Assessment endpoint
+app.post('/api/mental-health/assessment', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { responses, rawScore, accuracy, maxScore, completedAt } = req.body;
+
+    // Validate the assessment data
+    if (!responses || !Array.isArray(responses) || responses.length !== 5) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid assessment data. Expected 5 responses.'
+      });
+    }
+
+    if (rawScore < 0 || rawScore > 25) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid raw score. Must be between 0 and 25.'
+      });
+    }
+
+    // Store the assessment in the user's mhealth_games field
+    const usersCollection = database.collection("users");
+    
+    const assessmentData = {
+      responses: responses, // Individual question responses
+      rawScore: rawScore,
+      accuracy: accuracy,
+      maxScore: maxScore,
+      completedAt: new Date(completedAt),
+      createdAt: new Date()
+    };
+
+    // Add to mhealth_games array
+    await usersCollection.updateOne(
+      { _id: new ObjectId(userId) },
+      { 
+        $push: { 
+          mhealth_games: assessmentData
+        }
+      }
+    );
+
+    // Also store the score in the user's accuracies array for tracking
+    await usersCollection.updateOne(
+      { _id: new ObjectId(userId) },
+      { 
+        $push: { 
+          accuracies: {
+            gameName: "Mental Health Assessment",
+            accuracy: accuracy,
+            date: new Date().toISOString(),
+            rawScore: rawScore,
+            maxScore: maxScore
+          }
+        }
+      }
+    );
+
+    res.status(200).json({
+      success: true,
+      message: 'Assessment saved successfully',
+      data: {
+        rawScore: rawScore,
+        accuracy: accuracy,
+        assessmentData: assessmentData
+      }
+    });
+
+  } catch (error) {
+    console.error('Error saving mental health assessment:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+});
+
+// Get mental health assessment history
+app.get('/api/mental-health/history', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    
+    const user = await usersCollection.findOne(
+      { _id: new ObjectId(userId) },
+      { projection: { mhealth_games: 1 } }
+    );
+
+    const assessments = user?.mhealth_games || [];
+
+    res.status(200).json({
+      success: true,
+      data: assessments
+    });
+
+  } catch (error) {
+    console.error('Error fetching mental health history:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+});
 
 app.listen(8000, () => {
     console.log(`Server is running on port 8000.`);

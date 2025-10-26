@@ -53,7 +53,7 @@ export default function CognitiveGameTab() {
   const fetchGameData = async () => {
     setLoading(true);
     try {
-      const response = await fetch('http://192.168.23.164:8000/api/random-game/Memory');
+      const response = await fetch('http://localhost:8000/api/random-game/Memory');
       const result = await response.json();
       
       if (result.success && result.data && result.data.subType === 'Stroop') {
@@ -118,7 +118,7 @@ export default function CognitiveGameTab() {
     // Store the score
     if (user && token) {
       try {
-        await fetch('http://192.168.23.164:8000/api/games/score', {
+        await fetch('http://localhost:8000/api/games/score', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',

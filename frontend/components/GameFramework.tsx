@@ -35,7 +35,7 @@ export default function GameFramework({
     }
 
     try {
-      const response = await fetch('http://192.168.23.164:8000/api/games/score', {
+      const response = await fetch('http://localhost:8000/api/games/score', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
