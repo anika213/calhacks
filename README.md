@@ -1,21 +1,3 @@
-:::thinking
-The user wants me to create a GitHub README based on the hackathon project description they've provided. This is about an app for elderly users to track cognitive and emotional health, with features for brain games, progress tracking, and social connection.
-
-I should create a comprehensive, well-structured README that includes:
-- Project title and brief description
-- Inspiration/motivation
-- Features
-- Tech stack
-- Installation/setup instructions
-- Usage
-- Challenges
-- Learnings
-- Future roadmap
-- Contributing (optional)
-- License (optional)
-
-I'll format it properly with markdown, include badges if appropriate, and make it professional and easy to read.
-:::
 # 🧠 ElderCare Cognitive & Connection Platform
 
 > An empathetic, accessible app designed to help elderly individuals track cognitive health, combat loneliness, and reconnect with loved ones through engaging activities and social features.
@@ -188,38 +170,6 @@ Creating intuitive, non-overwhelming visual representations of cognitive trends 
 - [ ] **Caregiver dashboard** for family members to monitor loved ones (with consent)
 - [ ] **Multi-language support** for broader accessibility
 - [ ] **Offline mode** for games and activities
-
----
-
-## 🤝 Contributing
-
-We welcome contributions from the community! To contribute:
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
-
----
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
----
-
-## 👥 Team
-
-Built with ❤️ for our grandparents and elderly community members everywhere.
-
----
-
-## 📬 Contact
-
-Project Link: [https://github.com/yourusername/eldercare-app](https://github.com/yourusername/eldercare-app)
-
----
 
 ## 🙏 Acknowledgments
 
