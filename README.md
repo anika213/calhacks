@@ -2,9 +2,6 @@
 
 > An empathetic, accessible app designed to help elderly individuals track cognitive health, combat loneliness, and reconnect with loved ones through engaging activities and social features.
 
-[![Built With](https://img.shields.io/badge/Built%20With-MERN%20Stack-green)](https://github.com/yourusername/yourrepo)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-
 ---
 
 ## 📖 Inspiration
@@ -108,7 +105,7 @@ MONGODB_URI=your_mongodb_connection_string
 JWT_SECRET=your_jwt_secret
 JANITOR_AI_API_KEY=your_janitorai_key
 FISH_AUDIO_API_KEY=your_fish_audio_key
-PORT=5000
+PORT=8000
 ```
 
 5. **Start the backend server**
@@ -158,18 +155,6 @@ Creating intuitive, non-overwhelming visual representations of cognitive trends 
 - Best practices for integrating **audio-based AI models** for accessibility
 - Techniques for **real-time multiplayer state management**
 - The importance of **designing for underserved user demographics**
-
----
-
-## 🔮 Future Roadmap
-
-- [ ] **Personalized difficulty calibration** using reinforcement learning
-- [ ] **Adaptive learning features** that evolve with user performance
-- [ ] **Wearable integration** (Apple Watch, Fitbit) to combine physical and cognitive metrics
-- [ ] **AI-driven health insights** for early detection of cognitive decline patterns
-- [ ] **Caregiver dashboard** for family members to monitor loved ones (with consent)
-- [ ] **Multi-language support** for broader accessibility
-- [ ] **Offline mode** for games and activities
 
 ## 🙏 Acknowledgments
 
